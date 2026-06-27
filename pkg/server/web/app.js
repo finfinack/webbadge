@@ -75,7 +75,10 @@ const elements = {
   personTitle: document.querySelector("#person-title"),
   company: document.querySelector("#company"),
   portrait: document.querySelector("#portrait"),
+  portraitSize: document.querySelector("#portrait-size"),
   logo: document.querySelector("#logo"),
+  monogramLetter: document.querySelector("#monogram-letter"),
+  monogramColor: document.querySelector("#monogram-color"),
   accent: document.querySelector("#accent"),
   accentPreset: document.querySelector("#accent-preset"),
   canvas: document.querySelector("#design-canvas"),
@@ -290,19 +293,40 @@ function contrastingTextColor(color) {
   return luminance > 0.58 ? "#111" : "#fff";
 }
 
+function selectedMonogramLetter() {
+  return Array.from(elements.monogramLetter.value.trim())[0] || "";
+}
+
 function drawDesign() {
   const accent = elements.accent.value;
+  const monogramLetter = selectedMonogramLetter();
+  const hasHeaderMark = Boolean(monogramLetter || logoImage);
   context.fillStyle = "#fff";
   context.fillRect(0, 0, WIDTH, HEIGHT);
 
   context.fillStyle = accent;
   context.fillRect(0, 0, WIDTH, 116);
   context.fillStyle = contrastingTextColor(accent);
-  context.font = "800 22px Inter, Arial, sans-serif";
+  const companyName = elements.company.value.trim() || "COMPANY";
+  const companyMaximumWidth = hasHeaderMark ? 268 : 400;
+  const companyInitialSize = hasHeaderMark ? 22 : 42;
+  const headerCompanySize = fitText(companyName, companyMaximumWidth, companyInitialSize, 800, 22);
+  context.font = `800 ${headerCompanySize}px Inter, Arial, sans-serif`;
   context.textBaseline = "middle";
-  context.fillText(elements.company.value.trim() || "COMPANY", 30, 58);
+  context.fillText(ellipsize(companyName, companyMaximumWidth), 30, 58);
 
-  if (logoImage) {
+  if (monogramLetter) {
+    context.save();
+    context.fillStyle = elements.monogramColor.value;
+    roundedRect(context, 358, 22, 72, 72, 8);
+    context.fill();
+    context.fillStyle = contrastingTextColor(elements.monogramColor.value);
+    context.font = "800 44px Inter, Arial, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(monogramLetter, 394, 58);
+    context.restore();
+  } else if (logoImage) {
     context.fillStyle = "#fff";
     roundedRect(context, 318, 22, 112, 72, 8);
     context.fill();
@@ -312,14 +336,32 @@ function drawDesign() {
     context.drawImage(logoImage, 374 - logoWidth / 2, 58 - logoHeight / 2, logoWidth, logoHeight);
   }
 
+  const fullSizePortrait = elements.portraitSize.value === "full";
+  const portraitFrame = fullSizePortrait
+    ? {x: 0, y: 116, width: WIDTH, height: 428}
+    : {x: 30, y: 148, width: 400, height: 370};
+
   context.save();
-  roundedRect(context, 30, 148, 400, 370, 18);
-  context.clip();
+  if (!fullSizePortrait) {
+    roundedRect(context, portraitFrame.x, portraitFrame.y, portraitFrame.width, portraitFrame.height, 18);
+    context.clip();
+  }
   if (portraitImage) {
-    drawCoverImage(portraitImage, 30, 148, 400, 370);
+    drawCoverImage(
+      portraitImage,
+      portraitFrame.x,
+      portraitFrame.y,
+      portraitFrame.width,
+      portraitFrame.height,
+    );
   } else {
     context.fillStyle = "#efeee9";
-    context.fillRect(30, 148, 400, 370);
+    context.fillRect(
+      portraitFrame.x,
+      portraitFrame.y,
+      portraitFrame.width,
+      portraitFrame.height,
+    );
     context.fillStyle = "#c9c7bf";
     context.beginPath();
     context.arc(230, 277, 75, 0, Math.PI * 2);
@@ -775,7 +817,19 @@ elements.accent.addEventListener("input", () => {
   invalidatePrepared();
 });
 elements.portrait.addEventListener("change", () => selectOptionalImage(elements.portrait, (image) => { portraitImage = image; }));
+elements.portraitSize.addEventListener("change", () => {
+  drawDesign();
+  invalidatePrepared();
+});
 elements.logo.addEventListener("change", () => selectOptionalImage(elements.logo, (image) => { logoImage = image; }));
+elements.monogramLetter.addEventListener("input", () => {
+  drawDesign();
+  invalidatePrepared();
+});
+elements.monogramColor.addEventListener("input", () => {
+  drawDesign();
+  invalidatePrepared();
+});
 elements.connect.addEventListener("click", connectBadge);
 elements.writeBadge.addEventListener("click", writeBadge);
 

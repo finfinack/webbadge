@@ -118,6 +118,29 @@ func TestBulmaStylesheetIsServedLocally(t *testing.T) {
 	}
 }
 
+func TestDesignControlsAreServed(t *testing.T) {
+	handler := newTestHandler(t)
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	for _, expected := range []string{
+		`id="portrait-size"`,
+		`value="standard"`,
+		`value="full"`,
+		`id="monogram-letter"`,
+		`id="monogram-color"`,
+	} {
+		if !strings.Contains(response.Body.String(), expected) {
+			t.Errorf("response does not contain %q", expected)
+		}
+	}
+}
+
 func TestBrowserLogEndpoint(t *testing.T) {
 	var logs bytes.Buffer
 	previousLogger := slog.Default()

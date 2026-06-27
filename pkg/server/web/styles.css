@@ -156,6 +156,18 @@ body {
   padding: .45rem;
 }
 
+.portrait-size-control {
+  margin-top: .75rem;
+}
+
+.monogram-field {
+  margin-top: .75rem;
+}
+
+.monogram-controls {
+  margin-bottom: .25rem !important;
+}
+
 .accent-controls {
   margin-bottom: .25rem !important;
 }
