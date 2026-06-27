@@ -17,6 +17,8 @@ The Go server:
 The browser performs the BLE transfer through Web Bluetooth. Images and badge
 data are not persisted by the server.
 
+Disclaimer: Almost all of this is AI generated. I would strongly advise against exposing this webserver anywhere else than localhost.
+
 ## Requirements
 
 - Chrome or Edge on macOS, Windows, ChromeOS, or supported Android devices
