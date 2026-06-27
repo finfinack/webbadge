@@ -18,6 +18,11 @@ import (
 )
 
 var (
+	Commit  = "-"
+	Version = "dev-local"
+)
+
+var (
 	address  = flag.String("address", "127.0.0.1:8080", "HTTP listen address")
 	logLevel = flag.String("log", "info", "log level: debug, info, warn, or error")
 )
@@ -35,6 +40,8 @@ func main() {
 	})))
 
 	ctx := context.Background()
+
+	slog.Info("starting webbadge", "version", Version, "commit", Commit)
 	if err := run(ctx, *address); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)

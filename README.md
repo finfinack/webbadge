@@ -26,6 +26,8 @@ Web Bluetooth works from `http://localhost` during development.
 
 ## Run
 
+### Locally
+
 ```sh
 go run .
 ```
@@ -49,11 +51,43 @@ go run . -log debug
 An HTTP LAN address is not a secure browser context and therefore cannot use
 Web Bluetooth. Put a LAN deployment behind an HTTPS reverse proxy.
 
-## Test
+### Test
 
 ```sh
 go test -race ./...
 go vet ./...
+```
+
+### Docker
+
+The Dockerfile accepts two optional build arguments (`ARG`) to inject version metadata into the Go application:
+
+* `tag`: The version or release tag (Defaults to `latest`).
+* `commit`: The specific Git commit SHA (Defaults to `-`).
+
+#### Build
+
+To build the image with default arguments:
+
+```bash
+docker build -t homedisplay:latest .
+```
+
+To pass a specific version and the current Git commit string into the application:
+
+```bash
+docker build \
+  --build-arg tag="v1.2.3" \
+  --build-arg commit=$(git rev-parse --short HEAD 2>/dev/null || echo "development") \
+  -t homedisplay:v1.2.3 .
+```
+
+#### Run
+
+Adjust the parameters as you see fit:
+
+```bash
+docker run --rm -it -p 8080:8080 homedisplay:latest --log info --address 0.0.0.0:8080
 ```
 
 ## Badge protocol
