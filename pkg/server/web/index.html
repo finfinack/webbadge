@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Badge Studio</title>
+  <link rel="stylesheet" href="/bulma.min.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+  <header class="navbar site-header" aria-label="Main navigation">
+    <div class="container is-widescreen header-content">
+      <a class="navbar-item brand" href="/" aria-label="Badge Studio home">
+        <span class="brand-mark" aria-hidden="true">B</span>
+        <span>Badge Studio</span>
+      </a>
+      <div class="navbar-item connection">
+        <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
+        <span id="device-name">No badge connected</span>
+        <button id="connect" class="button is-light is-outlined is-small" type="button">Choose badge</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="section app-section">
+    <div class="container is-widescreen">
+      <section class="page-heading">
+        <h1 class="title is-1">Make it, push it, wear it.</h1>
+      </section>
+
+      <section class="columns is-variable is-6 workspace" aria-label="Badge editor">
+        <div class="column is-7">
+          <div class="box editor-panel">
+            <div class="tabs is-boxed is-fullwidth">
+              <ul role="tablist" aria-label="Artwork source">
+                <li class="is-active" role="presentation">
+                  <button id="design-tab" type="button" role="tab" aria-selected="true" aria-controls="design-panel">
+                    Create a badge
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button id="upload-tab" type="button" role="tab" aria-selected="false" aria-controls="upload-panel">
+                    Upload artwork
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <div id="design-panel" class="tab-panel" role="tabpanel" aria-labelledby="design-tab">
+              <div class="field">
+                <label class="label" for="person-name">Name</label>
+                <div class="control">
+                  <input id="person-name" class="input" type="text" maxlength="60" value="Elias Schmutzman"
+                    autocomplete="off">
+                </div>
+              </div>
+              <div class="field">
+                <label class="label" for="person-title">Title</label>
+                <div class="control">
+                  <input id="person-title" class="input" type="text" maxlength="80" value="Chief Bit Flipper"
+                    autocomplete="off">
+                </div>
+              </div>
+              <div class="field">
+                <label class="label" for="company">Company</label>
+                <div class="control">
+                  <input id="company" class="input" type="text" maxlength="80" value="The Flipping Company"
+                    autocomplete="organization">
+                </div>
+              </div>
+              <div class="columns is-variable is-4">
+                <div class="column field">
+                  <label class="label" for="portrait">Portrait</label>
+                  <div class="control">
+                    <input id="portrait" class="input file-input-control" type="file" accept="image/png,image/jpeg">
+                  </div>
+                </div>
+                <div class="column field">
+                  <label class="label" for="logo">Company logo</label>
+                  <div class="control">
+                    <input id="logo" class="input file-input-control" type="file" accept="image/png,image/jpeg">
+                  </div>
+                </div>
+              </div>
+              <div class="field">
+                <label class="label" for="accent-preset">Accent color</label>
+                <div class="field has-addons accent-controls">
+                  <div class="control is-expanded">
+                    <div class="select is-fullwidth">
+                      <select id="accent-preset">
+                        <option value="#ed1c24">Red</option>
+                        <option value="#ff8c1a">Orange</option>
+                        <option value="#ffd51f">Yellow</option>
+                        <option value="#28a745">Green</option>
+                        <option value="#3273dc">Blue</option>
+                        <option value="#9b59b6">Purple</option>
+                        <option value="#111111">Black</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="control">
+                    <input id="accent" class="input color-picker" type="color" value="#ed1c24"
+                      aria-label="Custom accent color">
+                  </div>
+                </div>
+                <p class="help">Custom colors are mapped to the badge's four-color e-ink palette in the final preview.</p>
+              </div>
+              <button id="prepare-design" class="button is-primary is-fullwidth" type="button">
+                Prepare e-ink preview
+              </button>
+            </div>
+
+            <div id="upload-panel" class="tab-panel" role="tabpanel" aria-labelledby="upload-tab" hidden>
+              <label id="drop-zone" class="drop-zone">
+                <input id="artwork" type="file" accept="image/png,image/jpeg">
+                <span class="drop-icon" aria-hidden="true">↗</span>
+                <strong>Drop PNG or JPEG artwork here</strong>
+                <span>or click to choose a file · maximum 10 MB</span>
+              </label>
+              <div class="field upload-fit">
+                <label class="label" for="artwork-fit">Image fit</label>
+                <div class="control select is-fullwidth">
+                  <select id="artwork-fit">
+                    <option value="contain">Contain entire image</option>
+                    <option value="cover">Fill and crop</option>
+                  </select>
+                </div>
+              </div>
+              <div id="upload-source" class="source-preview empty">
+                <span>Your artwork preview will appear here.</span>
+                <img id="upload-image" alt="Uploaded artwork preview">
+              </div>
+              <button id="prepare-upload" class="button is-primary is-fullwidth" type="button" disabled>
+                Prepare e-ink preview
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="column is-5">
+          <aside class="box preview-panel">
+            <div class="preview-heading">
+              <div>
+                <p class="eyebrow">Confirmation</p>
+                <h2 id="preview-title" class="title is-5">Layout preview</h2>
+              </div>
+              <span id="preview-state" class="tag is-dark">Draft</span>
+            </div>
+
+            <div class="badge-frame">
+              <canvas id="design-canvas" width="460" height="768" aria-label="Badge layout preview"></canvas>
+              <img id="final-preview" alt="Final four-color e-ink preview" hidden>
+            </div>
+
+            <div class="transfer">
+              <div class="progress-row">
+                <span id="status" role="status" aria-live="polite">Prepare an image to continue.</span>
+                <span id="progress-label">0%</span>
+              </div>
+              <progress id="progress" class="progress is-primary" max="100" value="0">0%</progress>
+              <button id="write-badge" class="button is-danger is-fullwidth" type="button" disabled>
+                Write confirmed image to badge
+              </button>
+              <p class="fine-print">Keep this tab visible and the badge nearby until the transfer completes.</p>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/app.js?v=10" type="module"></script>
+</body>
+
+</html>
