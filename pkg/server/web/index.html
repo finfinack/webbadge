@@ -77,6 +77,10 @@
                   <div class="control">
                     <input id="portrait" class="input file-input-control" type="file" accept="image/png,image/jpeg">
                   </div>
+                  <button id="open-webcam" class="button is-light is-outlined is-fullwidth portrait-camera-button"
+                    type="button">
+                    Take photo with webcam
+                  </button>
                   <div class="control portrait-size-control">
                     <div class="select is-fullwidth">
                       <select id="portrait-size" aria-label="Portrait size">
@@ -197,7 +201,34 @@
     </div>
   </main>
 
-  <script src="/app.js?v=13" type="module"></script>
+  <dialog id="webcam-dialog" class="webcam-dialog" aria-labelledby="webcam-title">
+    <div class="webcam-heading">
+      <div>
+        <p class="eyebrow">Portrait</p>
+        <h2 id="webcam-title" class="title is-4">Take a photo</h2>
+      </div>
+      <button id="close-webcam" class="delete" type="button" aria-label="Close webcam"></button>
+    </div>
+    <p id="webcam-status" class="webcam-status" role="status" aria-live="polite">
+      Requesting camera access…
+    </p>
+    <div class="webcam-stage">
+      <video id="webcam-video" autoplay muted playsinline></video>
+      <canvas id="webcam-crop-canvas" aria-label="Captured photo with square crop selection" hidden></canvas>
+    </div>
+    <div id="webcam-crop-controls" class="webcam-crop-controls" hidden>
+      <label class="label" for="webcam-crop-size">Crop size</label>
+      <input id="webcam-crop-size" class="slider is-fullwidth" type="range" min="30" max="100" value="80">
+      <p class="help">Drag the square over the part of the photo you want to use.</p>
+    </div>
+    <div class="buttons webcam-actions">
+      <button id="capture-webcam" class="button is-primary" type="button" disabled>Capture photo</button>
+      <button id="retake-webcam" class="button is-light" type="button" hidden>Retake</button>
+      <button id="use-webcam-crop" class="button is-primary" type="button" hidden>Use selected square</button>
+    </div>
+  </dialog>
+
+  <script src="/app.js?v=14" type="module"></script>
 </body>
 
 </html>

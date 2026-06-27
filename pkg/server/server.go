@@ -243,7 +243,7 @@ func securityHeaders(next http.Handler) http.Handler {
 				"img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; "+
 				"base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		writer.Header().Set("Permissions-Policy",
-			"bluetooth=(self), camera=(), geolocation=(), microphone=()")
+			"bluetooth=(self), camera=(self), geolocation=(), microphone=()")
 		writer.Header().Set("Referrer-Policy", "no-referrer")
 		writer.Header().Set("X-Content-Type-Options", "nosniff")
 		writer.Header().Set("X-Frame-Options", "DENY")

@@ -98,6 +98,9 @@ func TestSecurityHeaders(t *testing.T) {
 	if strings.Contains(response.Header().Get("Content-Security-Policy"), "unsafe-inline") {
 		t.Error("Content-Security-Policy unexpectedly permits inline code")
 	}
+	if !strings.Contains(response.Header().Get("Permissions-Policy"), "camera=(self)") {
+		t.Error("Permissions-Policy does not permit same-origin camera access")
+	}
 }
 
 func TestBulmaStylesheetIsServedLocally(t *testing.T) {
@@ -134,6 +137,8 @@ func TestDesignControlsAreServed(t *testing.T) {
 		`value="full"`,
 		`id="monogram-letter"`,
 		`id="monogram-color"`,
+		`id="open-webcam"`,
+		`id="webcam-crop-canvas"`,
 	} {
 		if !strings.Contains(response.Body.String(), expected) {
 			t.Errorf("response does not contain %q", expected)

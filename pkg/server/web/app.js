@@ -19,6 +19,8 @@ const BLE_BURST_CHUNKS = 16;
 const BLE_WRITE_ATTEMPTS = 20;
 const BLE_WRITE_RETRY_DELAY_MS = 5;
 const ACK_TIMEOUT_MS = 18000;
+const WEBCAM_MAX_DIMENSION = 2000;
+const WEBCAM_OUTPUT_SIZE = 1000;
 const logSession = typeof crypto.randomUUID === "function"
   ? crypto.randomUUID()
   : `session-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
@@ -76,6 +78,17 @@ const elements = {
   company: document.querySelector("#company"),
   portrait: document.querySelector("#portrait"),
   portraitSize: document.querySelector("#portrait-size"),
+  openWebcam: document.querySelector("#open-webcam"),
+  webcamDialog: document.querySelector("#webcam-dialog"),
+  webcamVideo: document.querySelector("#webcam-video"),
+  webcamStatus: document.querySelector("#webcam-status"),
+  webcamCropCanvas: document.querySelector("#webcam-crop-canvas"),
+  webcamCropControls: document.querySelector("#webcam-crop-controls"),
+  webcamCropSize: document.querySelector("#webcam-crop-size"),
+  captureWebcam: document.querySelector("#capture-webcam"),
+  retakeWebcam: document.querySelector("#retake-webcam"),
+  useWebcamCrop: document.querySelector("#use-webcam-crop"),
+  closeWebcam: document.querySelector("#close-webcam"),
   logo: document.querySelector("#logo"),
   monogramLetter: document.querySelector("#monogram-letter"),
   monogramColor: document.querySelector("#monogram-color"),
@@ -95,6 +108,9 @@ const elements = {
 };
 
 const context = elements.canvas.getContext("2d");
+const webcamSource = document.createElement("canvas");
+const webcamSourceContext = webcamSource.getContext("2d");
+const webcamCropContext = elements.webcamCropCanvas.getContext("2d");
 let activeTab = "design";
 let artworkFile = null;
 let artworkURL = "";
@@ -105,6 +121,10 @@ let previewURL = "";
 let bluetoothDevice = null;
 let transferring = false;
 let expectedDisconnect = false;
+let webcamStream = null;
+let webcamCrop = null;
+let webcamDrag = null;
+let webcamRequest = 0;
 
 class AckQueue {
   constructor() {
@@ -767,6 +787,232 @@ async function selectOptionalImage(input, setter) {
   }
 }
 
+function stopWebcamStream() {
+  if (webcamStream) {
+    for (const track of webcamStream.getTracks()) track.stop();
+  }
+  webcamStream = null;
+  elements.webcamVideo.srcObject = null;
+}
+
+function resetWebcamView() {
+  elements.webcamVideo.hidden = false;
+  elements.webcamCropCanvas.hidden = true;
+  elements.webcamCropControls.hidden = true;
+  elements.captureWebcam.hidden = false;
+  elements.captureWebcam.disabled = true;
+  elements.retakeWebcam.hidden = true;
+  elements.useWebcamCrop.hidden = true;
+  elements.webcamStatus.textContent = "Requesting camera access…";
+  webcamCrop = null;
+  webcamDrag = null;
+}
+
+function webcamErrorMessage(error) {
+  if (error.name === "NotAllowedError") {
+    return "Camera access was denied. Allow camera access in the browser and try again.";
+  }
+  if (error.name === "NotFoundError") {
+    return "No webcam was found.";
+  }
+  if (error.name === "NotReadableError") {
+    return "The webcam is already in use by another application.";
+  }
+  return "The webcam could not be started.";
+}
+
+async function startWebcam() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setProgress(0, "Webcam capture is unavailable in this browser or connection.");
+    return;
+  }
+
+  const request = ++webcamRequest;
+  stopWebcamStream();
+  resetWebcamView();
+  if (!elements.webcamDialog.open) elements.webcamDialog.showModal();
+  elements.openWebcam.disabled = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {facingMode: {ideal: "user"}},
+    });
+    if (request !== webcamRequest || !elements.webcamDialog.open) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+
+    webcamStream = stream;
+    elements.webcamVideo.srcObject = stream;
+    await elements.webcamVideo.play();
+    elements.captureWebcam.disabled = false;
+    elements.webcamStatus.textContent = "Position yourself, then capture the photo.";
+  } catch (error) {
+    if (request === webcamRequest) {
+      stopWebcamStream();
+      if (elements.webcamDialog.open) {
+        elements.webcamStatus.textContent = webcamErrorMessage(error);
+      }
+    }
+  } finally {
+    if (request === webcamRequest) elements.openWebcam.disabled = false;
+  }
+}
+
+function drawWebcamCrop() {
+  if (!webcamCrop) return;
+
+  const canvas = elements.webcamCropCanvas;
+  const {x, y, size} = webcamCrop;
+  webcamCropContext.clearRect(0, 0, canvas.width, canvas.height);
+  webcamCropContext.drawImage(webcamSource, 0, 0);
+  webcamCropContext.fillStyle = "rgba(0, 0, 0, .58)";
+  webcamCropContext.fillRect(0, 0, canvas.width, y);
+  webcamCropContext.fillRect(0, y + size, canvas.width, canvas.height - y - size);
+  webcamCropContext.fillRect(0, y, x, size);
+  webcamCropContext.fillRect(x + size, y, canvas.width - x - size, size);
+  webcamCropContext.strokeStyle = "#fff";
+  webcamCropContext.lineWidth = Math.max(2, canvas.width / 400);
+  webcamCropContext.strokeRect(x, y, size, size);
+}
+
+function captureWebcamPhoto() {
+  const sourceWidth = elements.webcamVideo.videoWidth;
+  const sourceHeight = elements.webcamVideo.videoHeight;
+  if (sourceWidth < 1 || sourceHeight < 1) {
+    elements.webcamStatus.textContent = "The webcam is not ready. Try capturing again.";
+    return;
+  }
+
+  const scale = Math.min(1, WEBCAM_MAX_DIMENSION / Math.max(sourceWidth, sourceHeight));
+  webcamSource.width = Math.max(1, Math.round(sourceWidth * scale));
+  webcamSource.height = Math.max(1, Math.round(sourceHeight * scale));
+  webcamSourceContext.drawImage(
+    elements.webcamVideo,
+    0,
+    0,
+    webcamSource.width,
+    webcamSource.height,
+  );
+  stopWebcamStream();
+
+  const minimumDimension = Math.min(webcamSource.width, webcamSource.height);
+  const size = minimumDimension * Number(elements.webcamCropSize.value) / 100;
+  webcamCrop = {
+    x: (webcamSource.width - size) / 2,
+    y: (webcamSource.height - size) / 2,
+    size,
+  };
+  elements.webcamCropCanvas.width = webcamSource.width;
+  elements.webcamCropCanvas.height = webcamSource.height;
+  elements.webcamVideo.hidden = true;
+  elements.webcamCropCanvas.hidden = false;
+  elements.webcamCropControls.hidden = false;
+  elements.captureWebcam.hidden = true;
+  elements.retakeWebcam.hidden = false;
+  elements.useWebcamCrop.hidden = false;
+  elements.webcamStatus.textContent = "Adjust the square crop, then use the selected area.";
+  drawWebcamCrop();
+}
+
+function webcamCanvasPoint(event) {
+  const bounds = elements.webcamCropCanvas.getBoundingClientRect();
+  return {
+    x: (event.clientX - bounds.left) * elements.webcamCropCanvas.width / bounds.width,
+    y: (event.clientY - bounds.top) * elements.webcamCropCanvas.height / bounds.height,
+  };
+}
+
+function moveWebcamCrop(point, offsetX, offsetY) {
+  const maximumX = webcamSource.width - webcamCrop.size;
+  const maximumY = webcamSource.height - webcamCrop.size;
+  webcamCrop.x = Math.min(Math.max(point.x - offsetX, 0), maximumX);
+  webcamCrop.y = Math.min(Math.max(point.y - offsetY, 0), maximumY);
+  drawWebcamCrop();
+}
+
+function startWebcamCropDrag(event) {
+  if (!webcamCrop) return;
+
+  const point = webcamCanvasPoint(event);
+  const insideCrop =
+    point.x >= webcamCrop.x && point.x <= webcamCrop.x + webcamCrop.size &&
+    point.y >= webcamCrop.y && point.y <= webcamCrop.y + webcamCrop.size;
+  const offsetX = insideCrop ? point.x - webcamCrop.x : webcamCrop.size / 2;
+  const offsetY = insideCrop ? point.y - webcamCrop.y : webcamCrop.size / 2;
+  webcamDrag = {pointerId: event.pointerId, offsetX, offsetY};
+  elements.webcamCropCanvas.setPointerCapture(event.pointerId);
+  moveWebcamCrop(point, offsetX, offsetY);
+}
+
+function dragWebcamCrop(event) {
+  if (!webcamCrop || !webcamDrag || event.pointerId !== webcamDrag.pointerId) return;
+  event.preventDefault();
+  moveWebcamCrop(webcamCanvasPoint(event), webcamDrag.offsetX, webcamDrag.offsetY);
+}
+
+function stopWebcamCropDrag(event) {
+  if (!webcamDrag || event.pointerId !== webcamDrag.pointerId) return;
+  if (elements.webcamCropCanvas.hasPointerCapture(event.pointerId)) {
+    elements.webcamCropCanvas.releasePointerCapture(event.pointerId);
+  }
+  webcamDrag = null;
+}
+
+function resizeWebcamCrop() {
+  if (!webcamCrop) return;
+
+  const centerX = webcamCrop.x + webcamCrop.size / 2;
+  const centerY = webcamCrop.y + webcamCrop.size / 2;
+  const minimumDimension = Math.min(webcamSource.width, webcamSource.height);
+  const size = minimumDimension * Number(elements.webcamCropSize.value) / 100;
+  webcamCrop.size = size;
+  webcamCrop.x = Math.min(Math.max(centerX - size / 2, 0), webcamSource.width - size);
+  webcamCrop.y = Math.min(Math.max(centerY - size / 2, 0), webcamSource.height - size);
+  drawWebcamCrop();
+}
+
+function useWebcamCrop() {
+  if (!webcamCrop) return;
+
+  const output = document.createElement("canvas");
+  output.width = WEBCAM_OUTPUT_SIZE;
+  output.height = WEBCAM_OUTPUT_SIZE;
+  const outputContext = output.getContext("2d");
+  outputContext.drawImage(
+    webcamSource,
+    webcamCrop.x,
+    webcamCrop.y,
+    webcamCrop.size,
+    webcamCrop.size,
+    0,
+    0,
+    output.width,
+    output.height,
+  );
+  portraitImage = output;
+  elements.portrait.value = "";
+  drawDesign();
+  invalidatePrepared();
+  elements.webcamDialog.close();
+}
+
+function closeWebcam() {
+  if (elements.webcamDialog.open) elements.webcamDialog.close();
+}
+
+function clearWebcamCapture() {
+  webcamRequest++;
+  stopWebcamStream();
+  elements.openWebcam.disabled = !navigator.mediaDevices?.getUserMedia;
+  webcamSource.width = 1;
+  webcamSource.height = 1;
+  elements.webcamCropCanvas.width = 1;
+  elements.webcamCropCanvas.height = 1;
+  webcamCrop = null;
+  webcamDrag = null;
+}
+
 elements.uploadTab.addEventListener("click", () => setTab("upload"));
 elements.designTab.addEventListener("click", () => setTab("design"));
 elements.artwork.addEventListener("change", () => selectArtwork(elements.artwork.files[0]));
@@ -821,6 +1067,17 @@ elements.portraitSize.addEventListener("change", () => {
   drawDesign();
   invalidatePrepared();
 });
+elements.openWebcam.addEventListener("click", startWebcam);
+elements.captureWebcam.addEventListener("click", captureWebcamPhoto);
+elements.retakeWebcam.addEventListener("click", startWebcam);
+elements.useWebcamCrop.addEventListener("click", useWebcamCrop);
+elements.closeWebcam.addEventListener("click", closeWebcam);
+elements.webcamDialog.addEventListener("close", clearWebcamCapture);
+elements.webcamCropSize.addEventListener("input", resizeWebcamCrop);
+elements.webcamCropCanvas.addEventListener("pointerdown", startWebcamCropDrag);
+elements.webcamCropCanvas.addEventListener("pointermove", dragWebcamCrop);
+elements.webcamCropCanvas.addEventListener("pointerup", stopWebcamCropDrag);
+elements.webcamCropCanvas.addEventListener("pointercancel", stopWebcamCropDrag);
 elements.logo.addEventListener("change", () => selectOptionalImage(elements.logo, (image) => { logoImage = image; }));
 elements.monogramLetter.addEventListener("input", () => {
   drawDesign();
@@ -832,6 +1089,7 @@ elements.monogramColor.addEventListener("input", () => {
 });
 elements.connect.addEventListener("click", connectBadge);
 elements.writeBadge.addEventListener("click", writeBadge);
+window.addEventListener("pagehide", clearWebcamCapture);
 
 drawDesign();
 clientLog("info", "page.ready", {
@@ -840,4 +1098,8 @@ clientLog("info", "page.ready", {
 if (!browserSupportsBluetooth()) {
   elements.connect.disabled = true;
   elements.deviceName.textContent = "Web Bluetooth unavailable";
+}
+if (!navigator.mediaDevices?.getUserMedia) {
+  elements.openWebcam.disabled = true;
+  elements.openWebcam.title = "Webcam capture requires a secure context and a supported browser.";
 }

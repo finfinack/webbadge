@@ -156,6 +156,7 @@ body {
   padding: .45rem;
 }
 
+.portrait-camera-button,
 .portrait-size-control {
   margin-top: .75rem;
 }
@@ -309,6 +310,74 @@ body {
   line-height: 1.45;
   margin: .75rem 0 0;
   text-align: center;
+}
+
+.webcam-dialog {
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: var(--bulma-radius-large);
+  color: var(--bulma-text);
+  max-height: 90vh;
+  max-width: min(720px, calc(100vw - 2rem));
+  overflow: auto;
+  padding: clamp(1rem, 4vw, 2rem);
+  width: 100%;
+}
+
+.webcam-dialog::backdrop {
+  background: rgba(0, 0, 0, .78);
+}
+
+.webcam-heading {
+  align-items: flex-start;
+  display: flex;
+  justify-content: space-between;
+}
+
+.webcam-heading .title {
+  margin: 0 0 1rem;
+}
+
+.webcam-status {
+  color: var(--app-muted);
+  margin-bottom: .75rem;
+}
+
+.webcam-stage {
+  align-items: center;
+  background: #090a0c;
+  border-radius: var(--bulma-radius-large);
+  display: flex;
+  justify-content: center;
+  min-height: 260px;
+  overflow: hidden;
+}
+
+.webcam-stage video,
+.webcam-stage canvas {
+  display: block;
+  height: auto;
+  max-height: 55vh;
+  max-width: 100%;
+}
+
+.webcam-stage canvas {
+  cursor: move;
+  touch-action: none;
+}
+
+.webcam-crop-controls {
+  margin-top: 1rem;
+}
+
+.webcam-crop-controls .slider {
+  accent-color: var(--accent);
+  width: 100%;
+}
+
+.webcam-actions {
+  justify-content: flex-end;
+  margin-top: 1rem;
 }
 
 @media (max-width: 768px) {
