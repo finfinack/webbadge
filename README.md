@@ -3,6 +3,8 @@
 Web Badge / Badge Studio is a standalone Go web application for preparing and
 transferring images to 460 × 768, four-color BOE e-ink badges.
 
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/b13720d1-c314-4fe2-b78e-a717ea502022" />
+
 The Go server:
 
 - embeds and serves the frontend
