@@ -1,11 +1,12 @@
 # webbadge
 
 Web Badge / Badge Studio is a standalone Go web application for preparing and
-transferring images to 460 × 768, four-color BOE e-ink badges, either over
-Bluetooth Low Energy from the browser or over NFC through a local ACS
-ACR1552 PC/SC reader.
+transferring images to e-ink badges, either over Bluetooth Low Energy from the
+browser or over NFC through a local ACS ACR1552 PC/SC reader.
 
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/0b9b11e5-7982-4bae-96e7-f326ee07e20c" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/228cc9fd-b1fc-4ed4-8952-5378a2a5c583" />
+
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/b451a8d5-52c7-4817-b1b4-e2dbb9191356" />
 
 The Go server:
 
