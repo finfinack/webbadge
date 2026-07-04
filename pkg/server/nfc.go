@@ -23,6 +23,7 @@ const (
 	nfcWriteBudget      = 2 * time.Minute
 	nfcStatusBudget     = 2 * time.Second
 	nfcBadgeProbeBudget = 400 * time.Millisecond
+	nfcInkProbeBudget   = 1200 * time.Millisecond
 )
 
 type nfcEvent struct {
@@ -116,13 +117,13 @@ type nfcReaderStatus struct {
 // on it) is currently reachable, without performing a write. It exists so
 // the status handler can be tested without real PC/SC hardware.
 type nfcReaderProbe interface {
-	Probe(ctx context.Context) (nfcReaderStatus, error)
+	Probe(ctx context.Context, profile badgeimage.Profile) (nfcReaderStatus, error)
 }
 
 // pcscReaderProbe is the real ACR1552/PC/SC liveness check.
 type pcscReaderProbe struct{}
 
-func (pcscReaderProbe) Probe(ctx context.Context) (nfcReaderStatus, error) {
+func (pcscReaderProbe) Probe(ctx context.Context, profile badgeimage.Profile) (nfcReaderStatus, error) {
 	session, err := pcsc.Establish()
 	if err != nil {
 		return nfcReaderStatus{}, fmt.Errorf("establish PC/SC session: %w", err)
@@ -136,14 +137,38 @@ func (pcscReaderProbe) Probe(ctx context.Context) (nfcReaderStatus, error) {
 
 	// A badge not answering within this short window just means there's no
 	// badge on the reader right now, which isn't an error worth surfacing.
-	badgeCtx, cancel := context.WithTimeout(ctx, nfcBadgeProbeBudget)
+	probeBudget := nfcBadgeProbeBudget
+	if profile.ID == badgeimage.NfcInk240x416.ID {
+		probeBudget = nfcInkProbeBudget
+	}
+	badgeCtx, cancel := context.WithTimeout(ctx, probeBudget)
 	defer cancel()
 	card, err := session.WaitForCard(badgeCtx, reader, 100*time.Millisecond)
 	if err != nil {
 		return nfcReaderStatus{Reader: reader}, nil
 	}
-	card.Close()
-	return nfcReaderStatus{Reader: reader, BadgePresent: true}, nil
+	defer card.Close()
+
+	present, err := probeBadgeProfile(badgeCtx, card, profile)
+	if err != nil {
+		return nfcReaderStatus{Reader: reader}, nil
+	}
+	return nfcReaderStatus{Reader: reader, BadgePresent: present}, nil
+}
+
+func probeBadgeProfile(ctx context.Context, card *pcsc.Card, profile badgeimage.Profile) (bool, error) {
+	switch profile.ID {
+	case "", badgeimage.Hybrid397.ID:
+		return true, nil
+	case badgeimage.NfcInk240x416.ID:
+		_, err := nfcink.NewNfcInkDevice(card, nil).ReadConfig(ctx)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("unsupported badge profile %q", profile.ID)
+	}
 }
 
 type nfcStatusResponse struct {
@@ -162,7 +187,17 @@ func (service *api) nfcStatus(writer http.ResponseWriter, request *http.Request)
 	ctx, cancel := context.WithTimeout(request.Context(), nfcStatusBudget)
 	defer cancel()
 
-	status, err := service.nfcProbe.Probe(ctx)
+	profile := badgeimage.Hybrid397
+	if profileID := request.URL.Query().Get("profile"); profileID != "" {
+		var ok bool
+		profile, ok = badgeimage.ProfileByID(profileID)
+		if !ok {
+			writeError(writer, http.StatusBadRequest, "unknown badge profile")
+			return
+		}
+	}
+
+	status, err := service.nfcProbe.Probe(ctx, profile)
 	if err != nil {
 		writeJSON(writer, http.StatusOK, nfcStatusResponse{Available: false, Error: err.Error()})
 		return

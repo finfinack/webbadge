@@ -43,11 +43,13 @@ func newNFCTestHandler(writer nfcBadgeWriter) http.Handler {
 }
 
 type fakeNFCProbe struct {
-	status nfcReaderStatus
-	err    error
+	status  nfcReaderStatus
+	err     error
+	profile badgeimage.Profile
 }
 
-func (fake fakeNFCProbe) Probe(context.Context) (nfcReaderStatus, error) {
+func (fake *fakeNFCProbe) Probe(_ context.Context, profile badgeimage.Profile) (nfcReaderStatus, error) {
+	fake.profile = profile
 	return fake.status, fake.err
 }
 
@@ -88,7 +90,8 @@ func TestNFCStatusEndpoint(t *testing.T) {
 			request.Header.Set("X-WebBadge-Request", "1")
 			response := httptest.NewRecorder()
 
-			newNFCStatusTestHandler(test.probe).ServeHTTP(response, request)
+			probe := test.probe
+			newNFCStatusTestHandler(&probe).ServeHTTP(response, request)
 
 			if response.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
@@ -117,10 +120,38 @@ func TestNFCStatusEndpointRejectsMissingHeader(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/nfc/status", nil)
 	response := httptest.NewRecorder()
 
-	newNFCStatusTestHandler(fakeNFCProbe{}).ServeHTTP(response, request)
+	newNFCStatusTestHandler(&fakeNFCProbe{}).ServeHTTP(response, request)
 
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestNFCStatusEndpointPassesSelectedProfile(t *testing.T) {
+	probe := &fakeNFCProbe{status: nfcReaderStatus{Reader: "ACR1552 PICC", BadgePresent: true}}
+	request := httptest.NewRequest(http.MethodGet, "/api/nfc/status?profile="+badgeimage.NfcInk240x416.ID, nil)
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCStatusTestHandler(probe).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if probe.profile != badgeimage.NfcInk240x416 {
+		t.Fatalf("profile = %v, want %v", probe.profile, badgeimage.NfcInk240x416)
+	}
+}
+
+func TestNFCStatusEndpointRejectsUnknownProfile(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/nfc/status?profile=unknown", nil)
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCStatusTestHandler(&fakeNFCProbe{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadRequest, response.Body.String())
 	}
 }
 

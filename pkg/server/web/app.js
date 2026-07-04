@@ -245,7 +245,7 @@ async function checkNFCReader() {
   nfcStatusChecking = true;
   updateActions();
   try {
-    const response = await fetch("/api/nfc/status", {
+    const response = await fetch(`/api/nfc/status?profile=${encodeURIComponent(badgeProfile)}`, {
       method: "GET",
       headers: {"X-WebBadge-Request": "1"},
     });
@@ -548,11 +548,22 @@ function badgeSupportsBLE(profile) {
   return profile === "hybrid-397";
 }
 
-// Keeps the transport choice consistent with what's actually possible:
-// nfcink has no BLE protocol at all, and BLE may be unavailable in this
-// browser regardless of badge type.
+// Keeps the transport and badge choices consistent with what's actually
+// possible. The small nfcink badge is NFC-only, and BLE may be unavailable
+// in this browser regardless of badge type.
 function applyBadgeProfileConstraints() {
   const bleOption = elements.transportSelect.querySelector('option[value="ble"]');
+  const nfcInkOption = elements.badgeTypeSelect.querySelector('option[value="nfcink-240x416"]');
+  const nfcInkAllowed = transportMode !== "ble";
+  if (nfcInkOption) {
+    nfcInkOption.disabled = !nfcInkAllowed;
+    nfcInkOption.hidden = !nfcInkAllowed;
+  }
+  if (!nfcInkAllowed && badgeProfile === "nfcink-240x416") {
+    badgeProfile = "hybrid-397";
+    elements.badgeTypeSelect.value = badgeProfile;
+    invalidatePrepared();
+  }
   const bleAllowed = badgeSupportsBLE(badgeProfile) && browserSupportsBluetooth();
   if (bleOption) bleOption.disabled = !bleAllowed;
   if (!bleAllowed && transportMode === "ble") {
@@ -1235,6 +1246,7 @@ elements.connect.addEventListener("click", () => {
 });
 elements.transportSelect.addEventListener("change", () => {
   transportMode = elements.transportSelect.value;
+  applyBadgeProfileConstraints();
   updateActions();
   if (transportMode === "nfc" && !nfcStatusChecking) checkNFCReader();
 });
