@@ -97,7 +97,18 @@ func writeNfcInk(ctx context.Context, card *pcsc.Card, img image.Image, progress
 	if err != nil {
 		return fmt.Errorf("read nfcink config: %w", err)
 	}
+	slog.Debug("nfcink write starting",
+		"reader", card.Reader(),
+		"atr", fmt.Sprintf("%X", card.ATR()),
+		"width", cfg.ScreenWidth,
+		"height", cfg.ScreenHeight,
+		"colors", cfg.ColorCount,
+		"picture_capacity", cfg.PictureCapacity,
+		"palette", cfg.ColorDic)
 	encoded := nfcink.EncodeImage(img, cfg)
+	slog.Debug("nfcink image encoded",
+		"bytes", len(encoded),
+		"preview", summarizeNFCBytes(encoded, 16))
 	if err := device.WriteImageD3(ctx, encoded, 0); err != nil {
 		return fmt.Errorf("write nfcink image: %w", err)
 	}
@@ -105,6 +116,19 @@ func writeNfcInk(ctx context.Context, card *pcsc.Card, img image.Image, progress
 		return fmt.Errorf("refresh nfcink badge: %w", err)
 	}
 	return nil
+}
+
+func summarizeNFCBytes(data []byte, preview int) string {
+	if len(data) == 0 {
+		return "len=0"
+	}
+	if preview <= 0 {
+		preview = 1
+	}
+	if len(data) <= preview {
+		return fmt.Sprintf("len=%d hex=%X", len(data), data)
+	}
+	return fmt.Sprintf("len=%d head=%X tail=%X", len(data), data[:preview], data[len(data)-preview:])
 }
 
 // nfcReaderStatus is what a liveness probe found on the local NFC reader.

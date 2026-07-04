@@ -56,6 +56,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 	"unsafe"
@@ -209,6 +210,10 @@ func (session *Session) connect(reader string) (*Card, error) {
 		return nil, err
 	}
 	card.atr = atr
+	slog.Debug("PC/SC card connected",
+		"reader", reader,
+		"protocol", uint32(protocol),
+		"atr", fmt.Sprintf("%X", atr))
 	return card, nil
 }
 

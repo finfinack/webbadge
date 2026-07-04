@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -39,12 +40,41 @@ func (device *NfcInkDevice) report(completed, total int) {
 	}
 }
 
+func logAPDU(stage string, command, response []byte, err error) {
+	attributes := []any{
+		"stage", stage,
+		"command", summarizeBytes(command, 16),
+	}
+	if response != nil {
+		attributes = append(attributes, "response", summarizeBytes(response, 16))
+		attributes = append(attributes, "status", fmt.Sprintf("%X", lastTwo(response)))
+	}
+	if err != nil {
+		attributes = append(attributes, "error", err)
+	}
+	slog.Debug("nfcink APDU", attributes...)
+}
+
+func summarizeBytes(data []byte, preview int) string {
+	if len(data) == 0 {
+		return "len=0"
+	}
+	if preview <= 0 {
+		preview = 1
+	}
+	if len(data) <= preview {
+		return fmt.Sprintf("len=%d hex=%X", len(data), data)
+	}
+	return fmt.Sprintf("len=%d head=%X tail=%X", len(data), data[:preview], data[len(data)-preview:])
+}
+
 // ReadConfig reads and parses the device configuration: the TLV APDU
 // (00D1000000) plus the best-effort PIN/4-color-marker check
 // (F0D8000005000000000E, allowed to fail, matching read_config()'s
 // graceful degradation in the Python driver).
 func (device *NfcInkDevice) ReadConfig(ctx context.Context) (DeviceCfg, error) {
 	resp1, err := device.card.Transmit(ctx, apduReadConfig)
+	logAPDU("read_config", apduReadConfig, resp1, err)
 	if err != nil {
 		return DeviceCfg{}, fmt.Errorf("read device config: %w", err)
 	}
@@ -52,10 +82,19 @@ func (device *NfcInkDevice) ReadConfig(ctx context.Context) (DeviceCfg, error) {
 		return DeviceCfg{}, fmt.Errorf("config read failed: %X", resp1)
 	}
 	resp2, err := device.card.Transmit(ctx, apduDeviceCheck)
+	logAPDU("device_check", apduDeviceCheck, resp2, err)
 	if err != nil {
 		resp2 = nil
 	}
-	return ParseDeviceCfg(resp1, resp2), nil
+	cfg := ParseDeviceCfg(resp1, resp2)
+	slog.Debug("nfcink config parsed",
+		"width", cfg.ScreenWidth,
+		"height", cfg.ScreenHeight,
+		"colors", cfg.ColorCount,
+		"picture_capacity", cfg.PictureCapacity,
+		"flip_vertical", cfg.FlipVertical,
+		"palette", cfg.ColorDic)
+	return cfg, nil
 }
 
 // WriteImageD2 uploads image data using raw (uncompressed) F0D2 APDUs.
@@ -69,6 +108,7 @@ func (device *NfcInkDevice) WriteImageD2(ctx context.Context, imageData []byte, 
 		end := min(offset+subChunkSize, len(imageData))
 		apdu := append([]byte{0xF0, 0xD2, byte(section), byte(seq), byte(end - offset)}, imageData[offset:end]...)
 		response, err := device.card.Transmit(ctx, apdu)
+		logAPDU(fmt.Sprintf("write_d2_chunk_%d", seq), apdu, response, err)
 		if err != nil {
 			return fmt.Errorf("write D2 chunk %d: %w", seq, err)
 		}
@@ -92,6 +132,11 @@ func (device *NfcInkDevice) WriteImageD3(ctx context.Context, imageData []byte, 
 		start := blockIndex * blockSize
 		end := min(start+blockSize, len(imageData))
 		compressed := CompressLZO1X(imageData[start:end])
+		slog.Debug("nfcink D3 block prepared",
+			"block", blockIndex,
+			"section", section,
+			"raw", summarizeBytes(imageData[start:end], 12),
+			"compressed", summarizeBytes(compressed, 12))
 		if err := device.writeD3Block(ctx, compressed, section, blockIndex); err != nil {
 			return err
 		}
@@ -132,6 +177,7 @@ func (device *NfcInkDevice) writeD3SubChunk(ctx context.Context, section, blockI
 	apdu = append(apdu, 0xF0, 0xD3, byte(section), p2, byte(len(data)+2), byte(blockIndex), byte(subIndex))
 	apdu = append(apdu, data...)
 	response, err := device.card.Transmit(ctx, apdu)
+	logAPDU(fmt.Sprintf("write_d3_block_%d_subchunk_%d", blockIndex, subIndex), apdu, response, err)
 	if err != nil {
 		return fmt.Errorf("write D3 block %d sub-chunk %d: %w", blockIndex, subIndex, err)
 	}
@@ -165,6 +211,14 @@ func (device *NfcInkDevice) sendRefresh(ctx context.Context, section int, retrie
 
 	sw := statusOf(response)
 	data := dataOf(response)
+	slog.Debug("nfcink refresh response",
+		"section", section,
+		"retried_once", retriedOnce,
+		"use_alt", useAlt,
+		"retries_6986", retries6986,
+		"response", summarizeBytes(response, 16),
+		"status", fmt.Sprintf("%X", sw),
+		"data", summarizeBytes(data, 8))
 	switch {
 	case sw == sw698A:
 		return fmt.Errorf("refresh: device hardware error (SW=%02X%02X)", sw[0], sw[1])
@@ -210,6 +264,7 @@ func (device *NfcInkDevice) sendRefresh(ctx context.Context, section int, retrie
 
 func (device *NfcInkDevice) pollRefresh(ctx context.Context, section, retries6986 int) error {
 	response, err := device.card.Transmit(ctx, apduPollRefresh)
+	logAPDU("poll_refresh", apduPollRefresh, response, err)
 	if err != nil {
 		// A drop right after a successful refresh-init still means the
 		// device is drawing autonomously; mirrors runner.py's _poll_once.
@@ -232,7 +287,13 @@ func (device *NfcInkDevice) refreshTransmit(ctx context.Context, section int, us
 		p1 = 0x85
 	}
 	apdu := []byte{0xF0, 0xD4, p1, byte(section & 0x7F), 0x00}
-	return device.card.Transmit(ctx, apdu)
+	response, err := device.card.Transmit(ctx, apdu)
+	stage := "refresh_init"
+	if useAlt {
+		stage = "refresh_alt"
+	}
+	logAPDU(stage, apdu, response, err)
+	return response, err
 }
 
 func checkSW(response []byte, want [2]byte) bool {
