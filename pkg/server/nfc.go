@@ -311,6 +311,13 @@ func (pcscNFCTagInfoReader) WriteNDEF(ctx context.Context, recordType, value str
 	if err != nil {
 		return err
 	}
+	return writeNDEFFile(ctx, card, capability, payload)
+}
+
+// writeNDEFFile writes a raw NDEF message to the already-discovered NDEF file,
+// clearing the length header first so a reader never observes a mix of old
+// and new payload bytes.
+func writeNDEFFile(ctx context.Context, card *pcsc.Card, capability ndefCapability, payload []byte) error {
 	if len(payload)+2 > capability.MaxSize {
 		return fmt.Errorf("NDEF payload is %d bytes, maximum is %d", len(payload)+2, capability.MaxSize)
 	}

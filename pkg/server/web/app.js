@@ -108,6 +108,7 @@ const elements = {
   writeBadge: document.querySelector("#write-badge"),
   readTagInfo: document.querySelector("#read-tag-info"),
   writeTagNdef: document.querySelector("#write-tag-ndef"),
+  cloneTag: document.querySelector("#clone-tag"),
   tagNdefType: document.querySelector("#tag-ndef-type"),
   tagNdefValue: document.querySelector("#tag-ndef-value"),
   tagReadStatus: document.querySelector("#tag-read-status"),
@@ -233,6 +234,7 @@ function setProgress(value, message) {
 
 function updateActions() {
   elements.readTagInfo.disabled = transportMode !== "nfc" || transferring || nfcStatusChecking;
+  elements.cloneTag.disabled = transportMode !== "nfc" || transferring || nfcStatusChecking;
   elements.writeTagNdef.disabled =
     transportMode !== "nfc" ||
     transferring ||
@@ -952,6 +954,40 @@ async function writeBadgeOverBLE() {
   }
 }
 
+// streamNFCEvents drains a `text/event-stream` progress response shared by
+// every long-running NFC endpoint (write, clone), invoking onEvent for each
+// stage/percent/message payload. It throws on an "error" stage or if the
+// connection closes before a "done" stage arrives, and always cancels the
+// reader if the stream didn't finish cleanly.
+async function streamNFCEvents(response, onEvent) {
+  if (!response.body) throw new Error("This browser does not support streamed responses.");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finished = false;
+  try {
+    while (!finished) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      let boundary;
+      while (!finished && (boundary = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const line = chunk.split("\n").find((candidate) => candidate.startsWith("data: "));
+        if (!line) continue;
+        const event = JSON.parse(line.slice("data: ".length));
+        onEvent(event);
+        if (event.stage === "error") throw new Error(event.message || "Operation failed.");
+        if (event.stage === "done") finished = true;
+      }
+    }
+    if (!finished) throw new Error("Connection closed before the operation finished.");
+  } finally {
+    if (!finished) reader.cancel().catch(() => {});
+  }
+}
+
 async function writeBadgeOverNFC() {
   if (!previewPngBytes || transferring) return;
   transferring = true;
@@ -959,8 +995,6 @@ async function writeBadgeOverNFC() {
   const startedAt = performance.now();
   clientLog("info", "nfc.transfer.started", {bytes: previewPngBytes.byteLength});
   setProgress(2, "Starting NFC write…");
-  let finished = false;
-  let reader = null;
   try {
     const form = new FormData();
     form.append("profile", badgeProfile);
@@ -974,29 +1008,10 @@ async function writeBadgeOverNFC() {
       const payload = await response.json().catch(() => ({}));
       throw new Error(payload.error || "NFC write failed.");
     }
-    if (!response.body) throw new Error("This browser does not support streamed responses.");
-
-    reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (!finished) {
-      const {value, done} = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, {stream: true});
-      let boundary;
-      while (!finished && (boundary = buffer.indexOf("\n\n")) >= 0) {
-        const chunk = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const line = chunk.split("\n").find((candidate) => candidate.startsWith("data: "));
-        if (!line) continue;
-        const event = JSON.parse(line.slice("data: ".length));
-        clientLog("info", "nfc.event", {stage: event.stage, detail: event.message});
-        if (event.stage === "error") throw new Error(event.message || "NFC write failed.");
-        setProgress(event.percent ?? 0, event.message || "");
-        if (event.stage === "done") finished = true;
-      }
-    }
-    if (!finished) throw new Error("Connection closed before the write finished.");
+    await streamNFCEvents(response, (event) => {
+      clientLog("info", "nfc.event", {stage: event.stage, detail: event.message});
+      setProgress(event.percent ?? 0, event.message || "");
+    });
     clientLog("info", "nfc.transfer.completed", {
       detail: `duration_ms=${Math.round(performance.now() - startedAt)}`,
     });
@@ -1006,7 +1021,6 @@ async function writeBadgeOverNFC() {
     });
     setProgress(0, `NFC write failed: ${error.message}`);
   } finally {
-    if (reader && !finished) reader.cancel().catch(() => {});
     transferring = false;
     updateActions();
   }
@@ -1071,6 +1085,41 @@ async function writeNFCTagNDEF() {
     elements.tagReadStatus.textContent = error.message;
     clientLog("error", "nfc.tag_ndef.failed", {
       detail: `${error.name || "Error"}: ${error.message || String(error)}`,
+    });
+  } finally {
+    transferring = false;
+    updateActions();
+  }
+}
+
+async function cloneNFCTag() {
+  if (transportMode !== "nfc" || transferring) return;
+  transferring = true;
+  updateActions();
+  elements.tagReadStatus.textContent = "Starting tag clone…";
+  clientLog("info", "nfc.tag_clone.started");
+  const startedAt = performance.now();
+  try {
+    const response = await fetch("/api/nfc/tag-clone", {
+      method: "POST",
+      headers: {"X-WebBadge-Request": "1"},
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "Tag clone failed.");
+    }
+    await streamNFCEvents(response, (event) => {
+      clientLog("info", "nfc.tag_clone.event", {stage: event.stage, detail: event.message});
+      elements.tagReadStatus.textContent = event.message || "";
+    });
+    elements.tagReadStatus.textContent = "Tag clone completed. Read the destination tag to verify.";
+    clientLog("info", "nfc.tag_clone.completed", {
+      detail: `duration_ms=${Math.round(performance.now() - startedAt)}`,
+    });
+  } catch (error) {
+    elements.tagReadStatus.textContent = error.message;
+    clientLog("error", "nfc.tag_clone.failed", {
+      detail: `elapsed_ms=${Math.round(performance.now() - startedAt)}; ${error.name || "Error"}: ${error.message || String(error)}`,
     });
   } finally {
     transferring = false;
@@ -1418,6 +1467,7 @@ elements.badgeTypeSelect.addEventListener("change", () => {
 elements.writeBadge.addEventListener("click", writeBadge);
 elements.readTagInfo.addEventListener("click", readNFCTagInfo);
 elements.writeTagNdef.addEventListener("click", writeNFCTagNDEF);
+elements.cloneTag.addEventListener("click", cloneNFCTag);
 elements.tagNdefType.addEventListener("change", () => syncTagNdefFields(null, false));
 elements.tagNdefValue.addEventListener("input", updateActions);
 window.addEventListener("pagehide", clearWebcamCapture);
