@@ -11,3 +11,9 @@ vet:
 
 run:
 	go run .
+
+docker-build:
+	docker build -t webbadge:latest .
+
+docker-run:
+	docker run -p 8080:8080 webbadge:latest

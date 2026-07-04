@@ -79,7 +79,7 @@ The Dockerfile accepts two optional build arguments (`ARG`) to inject version me
 To build the image with default arguments:
 
 ```bash
-docker build -t homedisplay:latest .
+docker build -t webbadge:latest .
 ```
 
 To pass a specific version and the current Git commit string into the application:
@@ -88,7 +88,7 @@ To pass a specific version and the current Git commit string into the applicatio
 docker build \
   --build-arg tag="v1.2.3" \
   --build-arg commit=$(git rev-parse --short HEAD 2>/dev/null || echo "development") \
-  -t homedisplay:v1.2.3 .
+  -t webbadge:v1.2.3 .
 ```
 
 #### Run
@@ -96,7 +96,7 @@ docker build \
 Adjust the parameters as you see fit:
 
 ```bash
-docker run --rm -it -p 8080:8080 homedisplay:latest --log info --address 0.0.0.0:8080
+docker run --rm -it -p 8080:8080 webbadge:latest --log info --address 0.0.0.0:8080
 ```
 
 ## Badge protocol
