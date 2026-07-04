@@ -10,10 +10,10 @@ vet:
 	go vet ./...
 
 run:
-	go run .
+	go run . --log info --address 0.0.0.0:8080
 
 docker-build:
 	docker build -t webbadge:latest .
 
 docker-run:
-	docker run -p 8080:8080 webbadge:latest
+	docker run --rm -it -p 8080:8080 webbadge:latest --log info --address 0.0.0.0:8080
