@@ -5,7 +5,7 @@ transferring images to 460 × 768, four-color BOE e-ink badges, either over
 Bluetooth Low Energy from the browser or over NFC through a local ACS
 ACR1552 PC/SC reader.
 
-<img width="600" alt="image" src="https://github.com/user-attachments/assets/a88ec947-1c17-42c0-8e7a-b6f29834bb00" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/0b9b11e5-7982-4bae-96e7-f326ee07e20c" />
 
 The Go server:
 
