@@ -394,16 +394,18 @@ func TestWriteNFCEndpointDispatchesSelectedProfile(t *testing.T) {
 
 func TestReadNFCTagInfoEndpoint(t *testing.T) {
 	reader := &fakeNFCTagInfoReader{info: nfcTagInfo{
-		Reader:        "ACR1552 PICC",
-		ATR:           "3B8F8001804F0CA000000306030001000000006A",
-		UID:           "04A1B2C3D4E5",
-		ATS:           "067577810280",
-		NDEFSupported: true,
-		NDEFWritable:  true,
-		NDEFCapacity:  500,
-		Content:       "Text: hello",
-		ContentHex:    "D101085402656E68656C6C6F",
-		ContentLines:  []string{"Text: hello"},
+		Reader:          "ACR1552 PICC",
+		ATR:             "3B8F8001804F0CA000000306030001000000006A",
+		UID:             "04A1B2C3D4E5",
+		ATS:             "067577810280",
+		NDEFSupported:   true,
+		NDEFWritable:    true,
+		NDEFCapacity:    500,
+		NDEFRecordType:  "text",
+		NDEFRecordValue: "hello",
+		Content:         "Text: hello",
+		ContentHex:      "D101085402656E68656C6C6F",
+		ContentLines:    []string{"Text: hello"},
 		ProbeLines: []string{
 			"Type 4 NDEF application select: status 6A81",
 			"Storage-card read block/page 0: ok data=04010203",
@@ -430,6 +432,9 @@ func TestReadNFCTagInfoEndpoint(t *testing.T) {
 	}
 	if !payload.NDEFSupported || !payload.NDEFWritable || payload.NDEFCapacity != 500 {
 		t.Fatalf("payload ndef = %+v, want supported+writable capacity 500", payload)
+	}
+	if payload.NDEFRecordType != "text" || payload.NDEFRecordValue != "hello" {
+		t.Fatalf("payload editable ndef = %+v, want text/hello", payload)
 	}
 	if len(payload.ProbeLines) != len(reader.info.ProbeLines) {
 		t.Fatalf("probe lines = %#v, want %#v", payload.ProbeLines, reader.info.ProbeLines)
@@ -543,6 +548,28 @@ func TestEncodeNDEFMessage(t *testing.T) {
 	}
 	if got := fmt.Sprintf("%X", message); !strings.Contains(got, "55") {
 		t.Fatalf("message = %s, want URI record", got)
+	}
+}
+
+func TestExtractEditableNDEFRecord(t *testing.T) {
+	recordType, value := extractEditableNDEFRecord([]byte{0xD1, 0x01, 0x08, 0x54, 0x02, 0x65, 0x6E, 'h', 'e', 'l', 'l', 'o'})
+	if recordType != "text" || value != "hello" {
+		t.Fatalf("extractEditableNDEFRecord() = %q, %q; want %q, %q", recordType, value, "text", "hello")
+	}
+}
+
+func TestParseType2TLV(t *testing.T) {
+	payload, err := parseType2TLV([]byte{
+		0x00, 0x00,
+		0x03, 0x19,
+		0xD1, 0x01, 0x15, 0x55, 0x04, 'y', 'o', 'u', 't', 'u', '.', 'b', 'e', '/', 'd', 'Q', 'w', '4', 'w', '9', 'W', 'g', 'X', 'c', 'Q',
+		0xFE,
+	})
+	if err != nil {
+		t.Fatalf("parseType2TLV() error = %v", err)
+	}
+	if got := fmt.Sprintf("%X", payload[:4]); got != "D1011555" {
+		t.Fatalf("payload prefix = %s, want D1011555", got)
 	}
 }
 

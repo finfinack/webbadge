@@ -358,6 +358,22 @@ function formatTagInfo(info) {
   return lines.join("\n");
 }
 
+function tagNdefPlaceholder(type) {
+  if (type === "email") return "person@example.com";
+  if (type === "text") return "Hello from NFC";
+  return "https://example.com";
+}
+
+function syncTagNdefFields(info, populateValue = true) {
+  if (info?.ndefRecordType && info?.ndefRecordValue) {
+    elements.tagNdefType.value = info.ndefRecordType;
+    if (populateValue) {
+      elements.tagNdefValue.value = info.ndefRecordValue;
+    }
+  }
+  elements.tagNdefValue.placeholder = tagNdefPlaceholder(elements.tagNdefType.value);
+}
+
 function loadImage(file) {
   return new Promise((resolve, reject) => {
     if (!file || !["image/png", "image/jpeg"].includes(file.type) || file.size > 10 * 1024 * 1024) {
@@ -1013,6 +1029,7 @@ async function readNFCTagInfo() {
       throw new Error(payload.error || "NFC tag read failed.");
     }
     lastTagInfo = payload;
+    syncTagNdefFields(payload);
     elements.tagInfoOutput.textContent = formatTagInfo(payload);
     elements.tagReadStatus.textContent = "Tag info read successfully.";
     clientLog("info", "nfc.tag_info.completed", {detail: `uid=${payload.uid || ""}`});
@@ -1401,6 +1418,7 @@ elements.badgeTypeSelect.addEventListener("change", () => {
 elements.writeBadge.addEventListener("click", writeBadge);
 elements.readTagInfo.addEventListener("click", readNFCTagInfo);
 elements.writeTagNdef.addEventListener("click", writeNFCTagNDEF);
+elements.tagNdefType.addEventListener("change", () => syncTagNdefFields(null, false));
 elements.tagNdefValue.addEventListener("input", updateActions);
 window.addEventListener("pagehide", clearWebcamCapture);
 

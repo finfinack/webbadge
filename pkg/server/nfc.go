@@ -142,18 +142,20 @@ type nfcReaderStatus struct {
 }
 
 type nfcTagInfo struct {
-	Reader        string   `json:"reader"`
-	ATR           string   `json:"atr"`
-	UID           string   `json:"uid,omitempty"`
-	ATS           string   `json:"ats,omitempty"`
-	Content       string   `json:"content,omitempty"`
-	ContentHex    string   `json:"contentHex,omitempty"`
-	ContentLines  []string `json:"contentLines,omitempty"`
-	ContentError  string   `json:"contentError,omitempty"`
-	ProbeLines    []string `json:"probeLines,omitempty"`
-	NDEFSupported bool     `json:"ndefSupported"`
-	NDEFWritable  bool     `json:"ndefWritable"`
-	NDEFCapacity  int      `json:"ndefCapacity,omitempty"`
+	Reader          string   `json:"reader"`
+	ATR             string   `json:"atr"`
+	UID             string   `json:"uid,omitempty"`
+	ATS             string   `json:"ats,omitempty"`
+	Content         string   `json:"content,omitempty"`
+	ContentHex      string   `json:"contentHex,omitempty"`
+	ContentLines    []string `json:"contentLines,omitempty"`
+	ContentError    string   `json:"contentError,omitempty"`
+	ProbeLines      []string `json:"probeLines,omitempty"`
+	NDEFRecordType  string   `json:"ndefRecordType,omitempty"`
+	NDEFRecordValue string   `json:"ndefRecordValue,omitempty"`
+	NDEFSupported   bool     `json:"ndefSupported"`
+	NDEFWritable    bool     `json:"ndefWritable"`
+	NDEFCapacity    int      `json:"ndefCapacity,omitempty"`
 }
 
 // nfcReaderProbe checks whether a local NFC reader (and optionally a badge
@@ -255,6 +257,7 @@ func (pcscNFCTagInfoReader) ReadInfo(ctx context.Context) (nfcTagInfo, error) {
 		if payload, err := readSelectedNDEFContent(ctx, card, capability); err == nil {
 			info.ContentHex = fmt.Sprintf("%X", payload)
 			info.Content, info.ContentLines = summarizeNDEF(payload)
+			info.NDEFRecordType, info.NDEFRecordValue = extractEditableNDEFRecord(payload)
 		} else {
 			info.ContentError = err.Error()
 		}
@@ -262,6 +265,14 @@ func (pcscNFCTagInfoReader) ReadInfo(ctx context.Context) (nfcTagInfo, error) {
 		info.NDEFSupported = true
 		info.ContentHex = fmt.Sprintf("%X", payload)
 		info.Content, info.ContentLines = summarizeNDEF(payload)
+		info.NDEFRecordType, info.NDEFRecordValue = extractEditableNDEFRecord(payload)
+	} else if payload, writable, capacity, err := readType2NDEFContent(ctx, card); err == nil {
+		info.NDEFSupported = true
+		info.NDEFWritable = writable
+		info.NDEFCapacity = capacity
+		info.ContentHex = fmt.Sprintf("%X", payload)
+		info.Content, info.ContentLines = summarizeNDEF(payload)
+		info.NDEFRecordType, info.NDEFRecordValue = extractEditableNDEFRecord(payload)
 	} else {
 		info.ContentError = err.Error()
 	}
@@ -366,6 +377,79 @@ func readSelectedNDEFContent(ctx context.Context, card *pcsc.Card, capability nd
 		return nil, errors.New("NDEF file is empty")
 	}
 	return readBinary(ctx, card, 2, length)
+}
+
+func readType2NDEFContent(ctx context.Context, card *pcsc.Card) ([]byte, bool, int, error) {
+	// Read enough pages to cover the capability container and the first TLVs.
+	pages, err := transmitData(ctx, card, []byte{0xFF, 0xB0, 0x00, 0x03, 0x30}, "read type 2 pages")
+	if err != nil {
+		return nil, false, 0, fmt.Errorf("read type 2 pages: %w", err)
+	}
+	if len(pages) < 16 {
+		return nil, false, 0, fmt.Errorf("type 2 page read too short: %X", pages)
+	}
+
+	cc := pages[:4]
+	if cc[0] != 0xE1 || (cc[1]&0xF0) != 0x10 {
+		return nil, false, 0, fmt.Errorf("type 2 capability container not found: %X", cc)
+	}
+	capacity := int(cc[2]) * 8
+	writable := (cc[3] & 0x0F) == 0x00
+
+	userData := pages[4:]
+	payload, err := parseType2TLV(userData)
+	if err != nil {
+		return nil, writable, capacity, err
+	}
+	return payload, writable, capacity, nil
+}
+
+func parseType2TLV(data []byte) ([]byte, error) {
+	for index := 0; index < len(data); {
+		tag := data[index]
+		index++
+		switch tag {
+		case 0x00:
+			continue
+		case 0xFE:
+			return nil, errors.New("type 2 terminator reached before NDEF TLV")
+		case 0x03:
+			if index >= len(data) {
+				return nil, errors.New("truncated type 2 NDEF TLV length")
+			}
+			length := int(data[index])
+			index++
+			if length == 0xFF {
+				if index+2 > len(data) {
+					return nil, errors.New("truncated extended type 2 NDEF TLV length")
+				}
+				length = int(binary.BigEndian.Uint16(data[index : index+2]))
+				index += 2
+			}
+			if index+length > len(data) {
+				return nil, errors.New("truncated type 2 NDEF TLV payload")
+			}
+			return append([]byte(nil), data[index:index+length]...), nil
+		default:
+			if index >= len(data) {
+				return nil, fmt.Errorf("truncated type 2 TLV length for tag %02X", tag)
+			}
+			length := int(data[index])
+			index++
+			if length == 0xFF {
+				if index+2 > len(data) {
+					return nil, fmt.Errorf("truncated extended type 2 TLV length for tag %02X", tag)
+				}
+				length = int(binary.BigEndian.Uint16(data[index : index+2]))
+				index += 2
+			}
+			if index+length > len(data) {
+				return nil, fmt.Errorf("truncated type 2 TLV value for tag %02X", tag)
+			}
+			index += length
+		}
+	}
+	return nil, errors.New("no type 2 NDEF TLV found")
 }
 
 func selectByName(ctx context.Context, card *pcsc.Card, aid []byte) error {
@@ -480,6 +564,79 @@ func summarizeNDEF(data []byte) (string, []string) {
 		lines = append(lines, record)
 	}
 	return strings.Join(lines, "\n"), lines
+}
+
+func extractEditableNDEFRecord(data []byte) (string, string) {
+	typeField, payload, err := firstNDEFRecord(data)
+	if err != nil {
+		return "", ""
+	}
+	switch string(typeField) {
+	case "T":
+		if len(payload) == 0 {
+			return "", ""
+		}
+		languageLength := int(payload[0] & 0x3F)
+		if 1+languageLength > len(payload) {
+			return "", ""
+		}
+		return "text", string(payload[1+languageLength:])
+	case "U":
+		if len(payload) == 0 {
+			return "", ""
+		}
+		prefix := ndefURIPrefix(payload[0])
+		value := prefix + string(payload[1:])
+		if strings.HasPrefix(value, "mailto:") {
+			return "email", strings.TrimPrefix(value, "mailto:")
+		}
+		return "url", value
+	default:
+		return "", ""
+	}
+}
+
+func firstNDEFRecord(data []byte) ([]byte, []byte, error) {
+	if len(data) == 0 {
+		return nil, nil, errors.New("empty NDEF message")
+	}
+	offset := 0
+	header := data[offset]
+	offset++
+	if offset+2 > len(data) {
+		return nil, nil, errors.New("truncated NDEF record header")
+	}
+	shortRecord := header&0x10 != 0
+	idLengthPresent := header&0x08 != 0
+	typeLength := int(data[offset])
+	offset++
+	var payloadLength int
+	if shortRecord {
+		payloadLength = int(data[offset])
+		offset++
+	} else {
+		if offset+4 > len(data) {
+			return nil, nil, errors.New("truncated NDEF payload length")
+		}
+		payloadLength = int(binary.BigEndian.Uint32(data[offset : offset+4]))
+		offset += 4
+	}
+	idLength := 0
+	if idLengthPresent {
+		if offset >= len(data) {
+			return nil, nil, errors.New("truncated NDEF id length")
+		}
+		idLength = int(data[offset])
+		offset++
+	}
+	end := offset + typeLength + idLength + payloadLength
+	if end > len(data) {
+		return nil, nil, errors.New("truncated NDEF payload")
+	}
+	typeField := append([]byte(nil), data[offset:offset+typeLength]...)
+	offset += typeLength + idLength
+	payload := append([]byte(nil), data[offset:offset+payloadLength]...)
+	return typeField, payload, nil
 }
 
 func probeTagContent(ctx context.Context, card *pcsc.Card) []string {
