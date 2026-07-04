@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"webbadge/pkg/badgeimage"
@@ -324,8 +325,33 @@ func (service *api) writeNFC(writer http.ResponseWriter, request *http.Request) 
 
 	if err := service.nfcWriter.Write(ctx, img, profile, emit); err != nil {
 		slog.Info("NFC badge write failed", "error", err)
-		emit("error", 0, err.Error())
+		emit("error", 0, userFacingNFCWriteError(profile, err))
 		return
 	}
 	emit("done", 100, "Badge write completed.")
+}
+
+func userFacingNFCWriteError(profile badgeimage.Profile, err error) string {
+	if message, ok := classifyWrongNFCAreaError(profile, err); ok {
+		return message
+	}
+	return err.Error()
+}
+
+func classifyWrongNFCAreaError(profile badgeimage.Profile, err error) (string, bool) {
+	message := err.Error()
+	switch profile.ID {
+	case badgeimage.Hybrid397.ID:
+		if strings.Contains(message, "ACR1552 transparent exchange failed") ||
+			strings.Contains(message, "wake badge: write FIFO") {
+			return "The badge was detected, but the reader reached its regular NFC tag area instead of the e-ink image-writing interface. Reposition the badge and try again.", true
+		}
+	case badgeimage.NfcInk240x416.ID:
+		if strings.Contains(message, "read nfcink config:") ||
+			strings.Contains(message, "write nfcink image:") ||
+			strings.Contains(message, "refresh nfcink badge:") {
+			return "The badge was detected, but it did not answer like the nfcink image-writing interface. If this badge also exposes normal NFC tag data, place the image-writing area on the reader and try again.", true
+		}
+	}
+	return "", false
 }

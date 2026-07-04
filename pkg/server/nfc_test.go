@@ -214,6 +214,69 @@ func TestWriteNFCEndpointStreamsWriterError(t *testing.T) {
 	}
 }
 
+func TestWriteNFCEndpointMapsHybridWrongAreaError(t *testing.T) {
+	fake := &fakeNFCWriter{err: &testWriteError{"write badge: wake badge: write FIFO: ACR1552 transparent exchange failed: raw-transmit[card returned status 6700]"}}
+	body, contentType := nfcWriteRequestBody(t, validBadgePNG(t))
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/write", body)
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTestHandler(fake).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	want := "regular NFC tag area instead of the e-ink image-writing interface"
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("response body %q does not contain %q", response.Body.String(), want)
+	}
+}
+
+func TestWriteNFCEndpointMapsNfcInkWrongAreaError(t *testing.T) {
+	fake := &fakeNFCWriter{err: &testWriteError{"read nfcink config: card returned status 6985"}}
+
+	source := image.NewNRGBA(image.Rect(0, 0, badgeimage.NfcInk240x416.Width, badgeimage.NfcInk240x416.Height))
+	for index := 0; index < len(source.Pix); index += 4 {
+		source.Pix[index+3] = 255
+	}
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, source); err != nil {
+		t.Fatalf("encode PNG: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("profile", badgeimage.NfcInk240x416.ID); err != nil {
+		t.Fatalf("write profile field: %v", err)
+	}
+	file, err := writer.CreateFormFile("image", "badge.png")
+	if err != nil {
+		t.Fatalf("create image field: %v", err)
+	}
+	if _, err := file.Write(pngBytes.Bytes()); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/write", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTestHandler(fake).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	want := "did not answer like the nfcink image-writing interface"
+	if !strings.Contains(response.Body.String(), want) {
+		t.Fatalf("response body %q does not contain %q", response.Body.String(), want)
+	}
+}
+
 func TestWriteNFCEndpointRejectsInvalidRequests(t *testing.T) {
 	tests := []struct {
 		name       string
