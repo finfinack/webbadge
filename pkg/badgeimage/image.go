@@ -13,16 +13,43 @@ import (
 )
 
 const (
-	// Width is the badge's pixel width.
+	// Width is Hybrid397's pixel width, kept for existing BLE code and tests.
 	Width = 460
-	// Height is the badge's pixel height.
+	// Height is Hybrid397's pixel height, kept for existing BLE code and tests.
 	Height = 768
-	// PackedSize is the number of bytes in a packed two-bit badge image.
+	// PackedSize is the number of bytes in Hybrid397's packed two-bit image.
 	PackedSize = Width * Height / 4
 
 	maxSourceDimension = 12_000
 	maxSourcePixels    = 20_000_000
 )
+
+// Profile describes one physical badge's target geometry.
+type Profile struct {
+	ID     string
+	Label  string
+	Width  int
+	Height int
+}
+
+// Hybrid397 is the 3.97in four-colour hybrid BLE/NFC badge.
+var Hybrid397 = Profile{ID: "hybrid-397", Label: "3.97in 4-colour hybrid", Width: Width, Height: Height}
+
+// NfcInk240x416 is the 240x416 four-colour NFC-only badge.
+var NfcInk240x416 = Profile{ID: "nfcink-240x416", Label: "nfcink 4-colour (240x416)", Width: 240, Height: 416}
+
+// Profiles lists every supported badge target.
+var Profiles = []Profile{Hybrid397, NfcInk240x416}
+
+// ProfileByID looks up a profile by its ID, as sent by the frontend.
+func ProfileByID(id string) (Profile, bool) {
+	for _, profile := range Profiles {
+		if profile.ID == id {
+			return profile, true
+		}
+	}
+	return Profile{}, false
+}
 
 // Fit controls how a source image is placed on the badge canvas.
 type Fit string
@@ -52,10 +79,13 @@ var palette = [...]paletteColor{
 	{r: 255, g: 255, b: 0, code: 2},
 }
 
-// Prepare decodes, resizes, dithers, and packs PNG or JPEG data.
-func Prepare(input []byte, fit Fit) (Result, error) {
+// Prepare decodes, resizes, dithers, and packs PNG or JPEG data for profile.
+func Prepare(input []byte, fit Fit, profile Profile) (Result, error) {
 	if fit != FitContain && fit != FitCover {
 		return Result{}, fmt.Errorf("unsupported fit mode %q", fit)
+	}
+	if profile.Width <= 0 || profile.Height <= 0 {
+		return Result{}, fmt.Errorf("unsupported badge profile %q", profile.ID)
 	}
 
 	config, format, err := image.DecodeConfig(bytes.NewReader(input))
@@ -79,8 +109,8 @@ func Prepare(input []byte, fit Fit) (Result, error) {
 		return Result{}, errors.New("image format changed while decoding")
 	}
 
-	canvas := resize(source, fit)
-	preview, packed := ditherAndPack(canvas)
+	canvas := resize(source, fit, profile)
+	preview, packed := ditherAndPack(canvas, profile)
 
 	var encoded bytes.Buffer
 	if err := png.Encode(&encoded, preview); err != nil {
@@ -89,8 +119,9 @@ func Prepare(input []byte, fit Fit) (Result, error) {
 	return Result{Preview: encoded.Bytes(), Packed: packed}, nil
 }
 
-func resize(source image.Image, fit Fit) *image.NRGBA {
-	output := image.NewNRGBA(image.Rect(0, 0, Width, Height))
+func resize(source image.Image, fit Fit, profile Profile) *image.NRGBA {
+	width, height := profile.Width, profile.Height
+	output := image.NewNRGBA(image.Rect(0, 0, width, height))
 	for index := 0; index < len(output.Pix); index += 4 {
 		output.Pix[index] = 255
 		output.Pix[index+1] = 255
@@ -101,8 +132,8 @@ func resize(source image.Image, fit Fit) *image.NRGBA {
 	bounds := source.Bounds()
 	sourceWidth := bounds.Dx()
 	sourceHeight := bounds.Dy()
-	scaleX := float64(Width) / float64(sourceWidth)
-	scaleY := float64(Height) / float64(sourceHeight)
+	scaleX := float64(width) / float64(sourceWidth)
+	scaleY := float64(height) / float64(sourceHeight)
 	scale := math.Min(scaleX, scaleY)
 	if fit == FitCover {
 		scale = math.Max(scaleX, scaleY)
@@ -110,16 +141,16 @@ func resize(source image.Image, fit Fit) *image.NRGBA {
 
 	drawWidth := float64(sourceWidth) * scale
 	drawHeight := float64(sourceHeight) * scale
-	offsetX := (float64(Width) - drawWidth) / 2
-	offsetY := (float64(Height) - drawHeight) / 2
+	offsetX := (float64(width) - drawWidth) / 2
+	offsetY := (float64(height) - drawHeight) / 2
 
-	for y := 0; y < Height; y++ {
+	for y := 0; y < height; y++ {
 		if float64(y)+0.5 < offsetY || float64(y)+0.5 >= offsetY+drawHeight {
 			continue
 		}
 		sourceY := (float64(y)-offsetY+0.5)/scale - 0.5
 		sourceY = min(max(sourceY, 0), float64(sourceHeight-1))
-		for x := 0; x < Width; x++ {
+		for x := 0; x < width; x++ {
 			if float64(x)+0.5 < offsetX || float64(x)+0.5 >= offsetX+drawWidth {
 				continue
 			}
@@ -177,8 +208,9 @@ func mixColor(first, second color.NRGBA, weight float64) color.NRGBA {
 	}
 }
 
-func ditherAndPack(input *image.NRGBA) (*image.NRGBA, []byte) {
-	pixelCount := Width * Height
+func ditherAndPack(input *image.NRGBA, profile Profile) (*image.NRGBA, []byte) {
+	width, height := profile.Width, profile.Height
+	pixelCount := width * height
 	work := make([]float64, pixelCount*3)
 	codes := make([]byte, pixelCount)
 	output := image.NewNRGBA(input.Bounds())
@@ -198,9 +230,9 @@ func ditherAndPack(input *image.NRGBA) (*image.NRGBA, []byte) {
 		work[index*3+2] += blue * factor
 	}
 
-	for y := 0; y < Height; y++ {
-		for x := 0; x < Width; x++ {
-			index := y*Width + x
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			index := y*width + x
 			selected := nearest(work[index*3], work[index*3+1], work[index*3+2])
 			codes[index] = selected.code
 			pixelOffset := index * 4
@@ -212,22 +244,22 @@ func ditherAndPack(input *image.NRGBA) (*image.NRGBA, []byte) {
 			redError := work[index*3] - selected.r
 			greenError := work[index*3+1] - selected.g
 			blueError := work[index*3+2] - selected.b
-			if x+1 < Width {
+			if x+1 < width {
 				diffuse(index+1, redError, greenError, blueError, 7.0/16)
 			}
-			if y+1 < Height {
+			if y+1 < height {
 				if x > 0 {
-					diffuse(index+Width-1, redError, greenError, blueError, 3.0/16)
+					diffuse(index+width-1, redError, greenError, blueError, 3.0/16)
 				}
-				diffuse(index+Width, redError, greenError, blueError, 5.0/16)
-				if x+1 < Width {
-					diffuse(index+Width+1, redError, greenError, blueError, 1.0/16)
+				diffuse(index+width, redError, greenError, blueError, 5.0/16)
+				if x+1 < width {
+					diffuse(index+width+1, redError, greenError, blueError, 1.0/16)
 				}
 			}
 		}
 	}
 
-	packed := make([]byte, PackedSize)
+	packed := make([]byte, pixelCount/4)
 	for outputPixel := 0; outputPixel < pixelCount; outputPixel++ {
 		sourcePixel := pixelCount - 1 - outputPixel
 		packed[outputPixel>>2] |= codes[sourcePixel] << ((3 - (outputPixel & 3)) * 2)

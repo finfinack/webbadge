@@ -25,7 +25,7 @@ func TestPrepareSolidColors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			input := encodePNG(t, image.NewUniform(test.color), image.Rect(0, 0, 10, 10))
 
-			result, err := Prepare(input, FitCover)
+			result, err := Prepare(input, FitCover, Hybrid397)
 			if err != nil {
 				t.Fatalf("Prepare() error = %v", err)
 			}
@@ -63,7 +63,7 @@ func TestPrepareValidation(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := Prepare(test.input, test.fit); err == nil {
+			if _, err := Prepare(test.input, test.fit, Hybrid397); err == nil {
 				t.Fatal("Prepare() error = nil, want validation error")
 			}
 		})
@@ -79,12 +79,42 @@ func TestPrepareJPEG(t *testing.T) {
 	if err := jpeg.Encode(&input, source, nil); err != nil {
 		t.Fatalf("encode JPEG: %v", err)
 	}
-	result, err := Prepare(input.Bytes(), FitContain)
+	result, err := Prepare(input.Bytes(), FitContain, Hybrid397)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
 	}
 	if len(result.Packed) != PackedSize {
 		t.Fatalf("packed size = %d, want %d", len(result.Packed), PackedSize)
+	}
+}
+
+func TestPrepareOtherProfile(t *testing.T) {
+	input := encodePNG(t, image.NewUniform(color.NRGBA{R: 255, A: 255}), image.Rect(0, 0, 10, 10))
+
+	result, err := Prepare(input, FitCover, NfcInk240x416)
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	wantPacked := NfcInk240x416.Width * NfcInk240x416.Height / 4
+	if len(result.Packed) != wantPacked {
+		t.Fatalf("packed size = %d, want %d", len(result.Packed), wantPacked)
+	}
+	preview, err := png.Decode(bytes.NewReader(result.Preview))
+	if err != nil {
+		t.Fatalf("decode preview: %v", err)
+	}
+	if preview.Bounds().Dx() != NfcInk240x416.Width || preview.Bounds().Dy() != NfcInk240x416.Height {
+		t.Fatalf("preview bounds = %v, want %dx%d", preview.Bounds(), NfcInk240x416.Width, NfcInk240x416.Height)
+	}
+}
+
+func TestProfileByID(t *testing.T) {
+	if _, ok := ProfileByID("does-not-exist"); ok {
+		t.Fatal("ProfileByID() found a profile for an unknown ID")
+	}
+	profile, ok := ProfileByID(Hybrid397.ID)
+	if !ok || profile != Hybrid397 {
+		t.Fatalf("ProfileByID(%q) = %v, %v; want %v, true", Hybrid397.ID, profile, ok, Hybrid397)
 	}
 }
 

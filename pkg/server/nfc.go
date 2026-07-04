@@ -13,6 +13,7 @@ import (
 
 	"webbadge/pkg/badgeimage"
 	"webbadge/pkg/nfcbadge"
+	"webbadge/pkg/nfcink"
 	"webbadge/pkg/pcsc"
 )
 
@@ -34,15 +35,14 @@ type nfcEvent struct {
 // it, reporting stage/percent/message progress as it goes. It exists so the
 // HTTP/SSE plumbing in writeNFC can be tested without real PC/SC hardware.
 type nfcBadgeWriter interface {
-	Write(ctx context.Context, img image.Image, report func(stage string, percent int, message string)) error
+	Write(ctx context.Context, img image.Image, profile badgeimage.Profile, report func(stage string, percent int, message string)) error
 }
 
-// pcscNFCWriter writes the nfc-a-397 profile through a local ACR1552 PC/SC
-// reader, mirroring the standalone nfcbadge CLI's `write --profile
-// nfc-a-397` behavior.
+// pcscNFCWriter writes either supported badge profile through a local
+// ACR1552 PC/SC reader, dispatching to the matching protocol package.
 type pcscNFCWriter struct{}
 
-func (pcscNFCWriter) Write(ctx context.Context, img image.Image, report func(stage string, percent int, message string)) error {
+func (pcscNFCWriter) Write(ctx context.Context, img image.Image, profile badgeimage.Profile, report func(stage string, percent int, message string)) error {
 	report("connecting", 0, "Opening PC/SC session…")
 	session, err := pcsc.Establish()
 	if err != nil {
@@ -65,15 +65,43 @@ func (pcscNFCWriter) Write(ctx context.Context, img image.Image, report func(sta
 	defer card.Close()
 
 	report("writing", 0, "Writing image to badge…")
-	writer := nfcbadge.NewNFCA397Writer(card, func(completed, total int) {
+	progress := func(completed, total int) {
 		percent := 100
 		if total > 0 {
 			percent = completed * 100 / total
 		}
 		report("writing", percent, fmt.Sprintf("Writing to badge… %d%%", percent))
-	})
-	if err := writer.Write(ctx, img); err != nil {
-		return fmt.Errorf("write badge: %w", err)
+	}
+
+	switch profile.ID {
+	case badgeimage.Hybrid397.ID:
+		writer := nfcbadge.NewNFCA397Writer(card, progress)
+		if err := writer.Write(ctx, img); err != nil {
+			return fmt.Errorf("write badge: %w", err)
+		}
+		return nil
+	case badgeimage.NfcInk240x416.ID:
+		return writeNfcInk(ctx, card, img, progress)
+	default:
+		return fmt.Errorf("unsupported badge profile %q", profile.ID)
+	}
+}
+
+// writeNfcInk reads the badge's own reported configuration (geometry,
+// colour wiring), encodes img to match it, uploads it via the
+// LZO-compressed D3 path, and triggers the screen refresh.
+func writeNfcInk(ctx context.Context, card *pcsc.Card, img image.Image, progress func(completed, total int)) error {
+	device := nfcink.NewNfcInkDevice(card, progress)
+	cfg, err := device.ReadConfig(ctx)
+	if err != nil {
+		return fmt.Errorf("read nfcink config: %w", err)
+	}
+	encoded := nfcink.EncodeImage(img, cfg)
+	if err := device.WriteImageD3(ctx, encoded, 0); err != nil {
+		return fmt.Errorf("write nfcink image: %w", err)
+	}
+	if err := device.Refresh(ctx, 0); err != nil {
+		return fmt.Errorf("refresh nfcink badge: %w", err)
 	}
 	return nil
 }
@@ -170,6 +198,12 @@ func (service *api) writeNFC(writer http.ResponseWriter, request *http.Request) 
 		}()
 	}
 
+	profile, ok := badgeimage.ProfileByID(request.FormValue("profile"))
+	if !ok {
+		writeError(writer, http.StatusBadRequest, "unknown badge profile")
+		return
+	}
+
 	file, _, err := request.FormFile("image")
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, "one image file is required")
@@ -187,9 +221,9 @@ func (service *api) writeNFC(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	bounds := img.Bounds()
-	if bounds.Dx() != badgeimage.Width || bounds.Dy() != badgeimage.Height {
+	if bounds.Dx() != profile.Width || bounds.Dy() != profile.Height {
 		writeError(writer, http.StatusBadRequest,
-			fmt.Sprintf("image must be exactly %dx%d pixels", badgeimage.Width, badgeimage.Height))
+			fmt.Sprintf("image must be exactly %dx%d pixels", profile.Width, profile.Height))
 		return
 	}
 
@@ -229,7 +263,7 @@ func (service *api) writeNFC(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := context.WithTimeout(request.Context(), nfcWriteBudget)
 	defer cancel()
 
-	if err := service.nfcWriter.Write(ctx, img, emit); err != nil {
+	if err := service.nfcWriter.Write(ctx, img, profile, emit); err != nil {
 		slog.Info("NFC badge write failed", "error", err)
 		emit("error", 0, err.Error())
 		return

@@ -203,6 +203,16 @@ func (service *api) prepare(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	profile := badgeimage.Hybrid397
+	if profileID := request.FormValue("profile"); profileID != "" {
+		var ok bool
+		profile, ok = badgeimage.ProfileByID(profileID)
+		if !ok {
+			writeError(writer, http.StatusBadRequest, "unknown badge profile")
+			return
+		}
+	}
+
 	file, _, err := request.FormFile("image")
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, "one image file is required")
@@ -231,7 +241,7 @@ func (service *api) prepare(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	result, err := badgeimage.Prepare(imageData, fit)
+	result, err := badgeimage.Prepare(imageData, fit, profile)
 	if err != nil {
 		slog.Info("rejected image", "error", err)
 		writeError(writer, http.StatusBadRequest, "image must be a valid PNG or JPEG within the size limits")
@@ -239,8 +249,8 @@ func (service *api) prepare(writer http.ResponseWriter, request *http.Request) {
 	}
 
 	writeJSON(writer, http.StatusOK, prepareResponse{
-		Width:      badgeimage.Width,
-		Height:     badgeimage.Height,
+		Width:      profile.Width,
+		Height:     profile.Height,
 		PreviewPNG: result.Preview,
 		Packed:     result.Packed,
 	})

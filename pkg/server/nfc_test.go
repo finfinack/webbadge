@@ -16,13 +16,15 @@ import (
 )
 
 type fakeNFCWriter struct {
-	events []func(report func(stage string, percent int, message string))
-	err    error
-	ctx    context.Context
+	events  []func(report func(stage string, percent int, message string))
+	err     error
+	ctx     context.Context
+	profile badgeimage.Profile
 }
 
-func (fake *fakeNFCWriter) Write(ctx context.Context, _ image.Image, report func(stage string, percent int, message string)) error {
+func (fake *fakeNFCWriter) Write(ctx context.Context, _ image.Image, profile badgeimage.Profile, report func(stage string, percent int, message string)) error {
 	fake.ctx = ctx
+	fake.profile = profile
 	for _, event := range fake.events {
 		event(report)
 	}
@@ -216,6 +218,48 @@ func TestWriteNFCEndpointRejectsInvalidRequests(t *testing.T) {
 	}
 }
 
+func TestWriteNFCEndpointDispatchesSelectedProfile(t *testing.T) {
+	fake := &fakeNFCWriter{}
+	source := image.NewNRGBA(image.Rect(0, 0, badgeimage.NfcInk240x416.Width, badgeimage.NfcInk240x416.Height))
+	for index := 0; index < len(source.Pix); index += 4 {
+		source.Pix[index+3] = 255
+	}
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, source); err != nil {
+		t.Fatalf("encode PNG: %v", err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("profile", badgeimage.NfcInk240x416.ID); err != nil {
+		t.Fatalf("write profile field: %v", err)
+	}
+	file, err := writer.CreateFormFile("image", "badge.png")
+	if err != nil {
+		t.Fatalf("create image field: %v", err)
+	}
+	if _, err := file.Write(pngBytes.Bytes()); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/write", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTestHandler(fake).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if fake.profile != badgeimage.NfcInk240x416 {
+		t.Fatalf("profile = %v, want %v", fake.profile, badgeimage.NfcInk240x416)
+	}
+}
+
 var errTestWrite = &testWriteError{"badge refused the write"}
 
 type testWriteError struct{ message string }
@@ -242,6 +286,9 @@ func nfcWriteRequestBody(t *testing.T, imageData []byte) (*bytes.Buffer, string)
 	t.Helper()
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("profile", badgeimage.Hybrid397.ID); err != nil {
+		t.Fatalf("write profile field: %v", err)
+	}
 	file, err := writer.CreateFormFile("image", "badge.png")
 	if err != nil {
 		t.Fatalf("create image field: %v", err)

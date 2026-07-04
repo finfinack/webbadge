@@ -40,6 +40,51 @@ func TestPrepareEndpoint(t *testing.T) {
 	}
 }
 
+func TestPrepareEndpointHonorsProfile(t *testing.T) {
+	handler := newTestHandler(t)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("fit", "contain"); err != nil {
+		t.Fatalf("write fit field: %v", err)
+	}
+	if err := writer.WriteField("profile", badgeimage.NfcInk240x416.ID); err != nil {
+		t.Fatalf("write profile field: %v", err)
+	}
+	file, err := writer.CreateFormFile("image", "badge.png")
+	if err != nil {
+		t.Fatalf("create image field: %v", err)
+	}
+	if _, err := file.Write(validPNG(t)); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/prepare", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var payload prepareResponse
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Width != badgeimage.NfcInk240x416.Width || payload.Height != badgeimage.NfcInk240x416.Height {
+		t.Fatalf("dimensions = %dx%d, want %dx%d", payload.Width, payload.Height,
+			badgeimage.NfcInk240x416.Width, badgeimage.NfcInk240x416.Height)
+	}
+	wantPacked := badgeimage.NfcInk240x416.Width * badgeimage.NfcInk240x416.Height / 4
+	if len(payload.Packed) != wantPacked {
+		t.Fatalf("packed size = %d, want %d", len(payload.Packed), wantPacked)
+	}
+}
+
 func TestPrepareEndpointRejectsInvalidRequests(t *testing.T) {
 	tests := []struct {
 		name       string

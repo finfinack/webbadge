@@ -102,6 +102,7 @@ const elements = {
   connectionDot: document.querySelector("#connection-dot"),
   deviceName: document.querySelector("#device-name"),
   transportSelect: document.querySelector("#transport-select"),
+  badgeTypeSelect: document.querySelector("#badge-type-select"),
   writeBadge: document.querySelector("#write-badge"),
   status: document.querySelector("#status"),
   progress: document.querySelector("#progress"),
@@ -128,6 +129,7 @@ let webcamCrop = null;
 let webcamDrag = null;
 let webcamRequest = 0;
 let transportMode = "ble";
+let badgeProfile = "hybrid-397";
 let nfcStatusChecking = false;
 let nfcReaderAvailable = false;
 let nfcReaderName = "";
@@ -496,6 +498,7 @@ async function prepare(file, fit) {
   try {
     const form = new FormData();
     form.append("fit", fit);
+    form.append("profile", badgeProfile);
     form.append("image", file, file.name || "badge.png");
     const response = await fetch("/api/prepare", {
       method: "POST",
@@ -505,10 +508,14 @@ async function prepare(file, fit) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || "Image preparation failed.");
 
-    const packed = decodeBase64(payload.packed);
-    if (packed.byteLength !== RAW_SIZE) throw new Error("The server returned an invalid badge image.");
-    packedImage = packed;
-    clientLog("info", "image.prepared", {bytes: packed.byteLength});
+    if (badgeProfile === "hybrid-397") {
+      const packed = decodeBase64(payload.packed);
+      if (packed.byteLength !== RAW_SIZE) throw new Error("The server returned an invalid badge image.");
+      packedImage = packed;
+      clientLog("info", "image.prepared", {bytes: packed.byteLength});
+    } else {
+      packedImage = null;
+    }
 
     const previewBytes = decodeBase64(payload.previewPng);
     previewPngBytes = previewBytes;
@@ -535,6 +542,23 @@ async function prepare(file, fit) {
 
 function browserSupportsBluetooth() {
   return "bluetooth" in navigator;
+}
+
+function badgeSupportsBLE(profile) {
+  return profile === "hybrid-397";
+}
+
+// Keeps the transport choice consistent with what's actually possible:
+// nfcink has no BLE protocol at all, and BLE may be unavailable in this
+// browser regardless of badge type.
+function applyBadgeProfileConstraints() {
+  const bleOption = elements.transportSelect.querySelector('option[value="ble"]');
+  const bleAllowed = badgeSupportsBLE(badgeProfile) && browserSupportsBluetooth();
+  if (bleOption) bleOption.disabled = !bleAllowed;
+  if (!bleAllowed && transportMode === "ble") {
+    transportMode = "nfc";
+    elements.transportSelect.value = "nfc";
+  }
 }
 
 async function connectBadge() {
@@ -837,6 +861,7 @@ async function writeBadgeOverNFC() {
   let reader = null;
   try {
     const form = new FormData();
+    form.append("profile", badgeProfile);
     form.append("image", new Blob([previewPngBytes], {type: "image/png"}), "badge.png");
     const response = await fetch("/api/nfc/write", {
       method: "POST",
@@ -1213,6 +1238,13 @@ elements.transportSelect.addEventListener("change", () => {
   updateActions();
   if (transportMode === "nfc" && !nfcStatusChecking) checkNFCReader();
 });
+elements.badgeTypeSelect.addEventListener("change", () => {
+  badgeProfile = elements.badgeTypeSelect.value;
+  invalidatePrepared();
+  applyBadgeProfileConstraints();
+  updateActions();
+  if (transportMode === "nfc" && !nfcStatusChecking) checkNFCReader();
+});
 elements.writeBadge.addEventListener("click", writeBadge);
 window.addEventListener("pagehide", clearWebcamCapture);
 
@@ -1220,13 +1252,8 @@ drawDesign();
 clientLog("info", "page.ready", {
   detail: `secure_context=${window.isSecureContext}; web_bluetooth=${browserSupportsBluetooth()}; user_agent=${navigator.userAgent}`,
 });
-if (!browserSupportsBluetooth()) {
-  const bleOption = elements.transportSelect.querySelector('option[value="ble"]');
-  if (bleOption) bleOption.disabled = true;
-  transportMode = "nfc";
-  elements.transportSelect.value = "nfc";
-  checkNFCReader();
-}
+applyBadgeProfileConstraints();
+if (transportMode === "nfc") checkNFCReader();
 updateActions();
 if (!navigator.mediaDevices?.getUserMedia) {
   elements.openWebcam.disabled = true;
