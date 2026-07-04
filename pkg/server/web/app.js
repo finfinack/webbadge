@@ -101,6 +101,7 @@ const elements = {
   connect: document.querySelector("#connect"),
   connectionDot: document.querySelector("#connection-dot"),
   deviceName: document.querySelector("#device-name"),
+  transportSelect: document.querySelector("#transport-select"),
   writeBadge: document.querySelector("#write-badge"),
   status: document.querySelector("#status"),
   progress: document.querySelector("#progress"),
@@ -117,6 +118,7 @@ let artworkURL = "";
 let portraitImage = null;
 let logoImage = null;
 let packedImage = null;
+let previewPngBytes = null;
 let previewURL = "";
 let bluetoothDevice = null;
 let transferring = false;
@@ -125,6 +127,11 @@ let webcamStream = null;
 let webcamCrop = null;
 let webcamDrag = null;
 let webcamRequest = 0;
+let transportMode = "ble";
+let nfcStatusChecking = false;
+let nfcReaderAvailable = false;
+let nfcReaderName = "";
+let nfcBadgePresent = false;
 
 class AckQueue {
   constructor() {
@@ -205,14 +212,64 @@ function setProgress(value, message) {
 }
 
 function updateActions() {
-  const connected = Boolean(bluetoothDevice?.gatt?.connected);
-  elements.writeBadge.disabled = !packedImage || !bluetoothDevice || transferring;
-  elements.connect.disabled = transferring;
-  elements.connectionDot.classList.toggle("connected", connected);
+  if (transportMode === "ble") {
+    const connected = Boolean(bluetoothDevice?.gatt?.connected);
+    elements.connectionDot.classList.toggle("connected", connected);
+    elements.deviceName.textContent = bluetoothDevice
+      ? (connected ? (bluetoothDevice.name || "Selected badge") : `${bluetoothDevice.name || "Badge"} disconnected`)
+      : "No badge connected";
+    elements.connect.textContent = bluetoothDevice ? "Change badge" : "Choose badge";
+    elements.connect.disabled = transferring;
+    elements.writeBadge.disabled = !packedImage || !bluetoothDevice || transferring;
+  } else {
+    elements.connectionDot.classList.toggle("connected", nfcReaderAvailable);
+    if (nfcStatusChecking) {
+      elements.deviceName.textContent = "Checking for reader…";
+    } else if (!nfcReaderAvailable) {
+      elements.deviceName.textContent = "No NFC reader found";
+    } else {
+      elements.deviceName.textContent = `${nfcReaderName || "NFC reader"} · ${
+        nfcBadgePresent ? "badge detected" : "no badge on reader"
+      }`;
+    }
+    elements.connect.textContent = "Check for reader";
+    elements.connect.disabled = transferring || nfcStatusChecking;
+    elements.writeBadge.disabled = !previewPngBytes || !nfcReaderAvailable || transferring;
+  }
+}
+
+async function checkNFCReader() {
+  if (nfcStatusChecking) return;
+  nfcStatusChecking = true;
+  updateActions();
+  try {
+    const response = await fetch("/api/nfc/status", {
+      method: "GET",
+      headers: {"X-WebBadge-Request": "1"},
+    });
+    const payload = await response.json();
+    nfcReaderAvailable = Boolean(payload.available);
+    nfcReaderName = payload.reader || "";
+    nfcBadgePresent = Boolean(payload.badgePresent);
+    if (!nfcReaderAvailable) {
+      clientLog("info", "nfc.status.unavailable", {detail: payload.error || ""});
+    }
+  } catch (error) {
+    nfcReaderAvailable = false;
+    nfcReaderName = "";
+    nfcBadgePresent = false;
+    clientLog("error", "nfc.status.failed", {
+      detail: `${error.name || "Error"}: ${error.message || String(error)}`,
+    });
+  } finally {
+    nfcStatusChecking = false;
+    updateActions();
+  }
 }
 
 function invalidatePrepared() {
   packedImage = null;
+  previewPngBytes = null;
   if (previewURL) URL.revokeObjectURL(previewURL);
   previewURL = "";
   elements.finalPreview.hidden = true;
@@ -454,6 +511,7 @@ async function prepare(file, fit) {
     clientLog("info", "image.prepared", {bytes: packed.byteLength});
 
     const previewBytes = decodeBase64(payload.previewPng);
+    previewPngBytes = previewBytes;
     previewURL = URL.createObjectURL(new Blob([previewBytes], {type: "image/png"}));
     elements.finalPreview.src = previewURL;
     elements.finalPreview.hidden = false;
@@ -466,6 +524,7 @@ async function prepare(file, fit) {
       : "Preview confirmed. Choose a badge to continue.");
   } catch (error) {
     packedImage = null;
+    previewPngBytes = null;
     setProgress(0, error.message);
   } finally {
     elements.prepareUpload.disabled = !artworkFile;
@@ -494,8 +553,6 @@ async function connectBadge() {
     bluetoothDevice.addEventListener("gattserverdisconnected", onDisconnected);
     clientLog("info", "device.selected", {device: device.name || "unnamed"});
     setProgress(0, `Selected ${device.name || "badge"}. It will connect when writing.`);
-    elements.deviceName.textContent = device.name || "Selected badge";
-    elements.connect.textContent = "Change badge";
     // Connect now so the primary action accurately reflects readiness.
     clientLog("info", "gatt.connecting", {device: device.name || "unnamed"});
     await device.gatt.connect();
@@ -523,9 +580,6 @@ function onDisconnected() {
     updateActions();
     return;
   }
-  elements.deviceName.textContent = bluetoothDevice?.name
-    ? `${bluetoothDevice.name} disconnected`
-    : "Badge disconnected";
   setProgress(0, "Badge disconnected. Choose it again or retry the transfer.");
   updateActions();
 }
@@ -641,7 +695,11 @@ async function writeDataValue(characteristic, value, requireResponse) {
 
 const delay = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
-async function writeBadge() {
+function writeBadge() {
+  return transportMode === "nfc" ? writeBadgeOverNFC() : writeBadgeOverBLE();
+}
+
+async function writeBadgeOverBLE() {
   if (!packedImage || !bluetoothDevice || transferring) return;
   transferring = true;
   updateActions();
@@ -765,6 +823,65 @@ async function writeBadge() {
     }
     updateActions();
     clientLog("info", "transfer.cleanup_completed", {stage});
+  }
+}
+
+async function writeBadgeOverNFC() {
+  if (!previewPngBytes || transferring) return;
+  transferring = true;
+  updateActions();
+  const startedAt = performance.now();
+  clientLog("info", "nfc.transfer.started", {bytes: previewPngBytes.byteLength});
+  setProgress(2, "Starting NFC write…");
+  let finished = false;
+  let reader = null;
+  try {
+    const form = new FormData();
+    form.append("image", new Blob([previewPngBytes], {type: "image/png"}), "badge.png");
+    const response = await fetch("/api/nfc/write", {
+      method: "POST",
+      headers: {"X-WebBadge-Request": "1"},
+      body: form,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.error || "NFC write failed.");
+    }
+    if (!response.body) throw new Error("This browser does not support streamed responses.");
+
+    reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (!finished) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, {stream: true});
+      let boundary;
+      while (!finished && (boundary = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const line = chunk.split("\n").find((candidate) => candidate.startsWith("data: "));
+        if (!line) continue;
+        const event = JSON.parse(line.slice("data: ".length));
+        clientLog("info", "nfc.event", {stage: event.stage, detail: event.message});
+        if (event.stage === "error") throw new Error(event.message || "NFC write failed.");
+        setProgress(event.percent ?? 0, event.message || "");
+        if (event.stage === "done") finished = true;
+      }
+    }
+    if (!finished) throw new Error("Connection closed before the write finished.");
+    clientLog("info", "nfc.transfer.completed", {
+      detail: `duration_ms=${Math.round(performance.now() - startedAt)}`,
+    });
+  } catch (error) {
+    clientLog("error", "nfc.transfer.failed", {
+      detail: `elapsed_ms=${Math.round(performance.now() - startedAt)}; ${error.name || "Error"}: ${error.message || String(error)}`,
+    });
+    setProgress(0, `NFC write failed: ${error.message}`);
+  } finally {
+    if (reader && !finished) reader.cancel().catch(() => {});
+    transferring = false;
+    updateActions();
   }
 }
 
@@ -1087,7 +1204,15 @@ elements.monogramColor.addEventListener("input", () => {
   drawDesign();
   invalidatePrepared();
 });
-elements.connect.addEventListener("click", connectBadge);
+elements.connect.addEventListener("click", () => {
+  if (transportMode === "ble") connectBadge();
+  else checkNFCReader();
+});
+elements.transportSelect.addEventListener("change", () => {
+  transportMode = elements.transportSelect.value;
+  updateActions();
+  if (transportMode === "nfc" && !nfcStatusChecking) checkNFCReader();
+});
 elements.writeBadge.addEventListener("click", writeBadge);
 window.addEventListener("pagehide", clearWebcamCapture);
 
@@ -1096,9 +1221,13 @@ clientLog("info", "page.ready", {
   detail: `secure_context=${window.isSecureContext}; web_bluetooth=${browserSupportsBluetooth()}; user_agent=${navigator.userAgent}`,
 });
 if (!browserSupportsBluetooth()) {
-  elements.connect.disabled = true;
-  elements.deviceName.textContent = "Web Bluetooth unavailable";
+  const bleOption = elements.transportSelect.querySelector('option[value="ble"]');
+  if (bleOption) bleOption.disabled = true;
+  transportMode = "nfc";
+  elements.transportSelect.value = "nfc";
+  checkNFCReader();
 }
+updateActions();
 if (!navigator.mediaDevices?.getUserMedia) {
   elements.openWebcam.disabled = true;
   elements.openWebcam.title = "Webcam capture requires a secure context and a supported browser.";

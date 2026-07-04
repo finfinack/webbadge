@@ -31,6 +31,9 @@ var webFiles embed.FS
 
 type api struct {
 	renderSlots chan struct{}
+	nfcSlots    chan struct{}
+	nfcWriter   nfcBadgeWriter
+	nfcProbe    nfcReaderProbe
 }
 
 type prepareResponse struct {
@@ -63,10 +66,17 @@ func New() (http.Handler, error) {
 		return nil, fmt.Errorf("open embedded frontend: %w", err)
 	}
 
-	service := &api{renderSlots: make(chan struct{}, 2)}
+	service := &api{
+		renderSlots: make(chan struct{}, 2),
+		nfcSlots:    make(chan struct{}, 1),
+		nfcWriter:   pcscNFCWriter{},
+		nfcProbe:    pcscReaderProbe{},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/prepare", service.prepare)
 	mux.HandleFunc("POST /api/log", service.browserLog)
+	mux.HandleFunc("POST /api/nfc/write", service.writeNFC)
+	mux.HandleFunc("GET /api/nfc/status", service.nfcStatus)
 	mux.Handle("GET /", http.FileServer(http.FS(staticFiles)))
 	return securityHeaders(mux), nil
 }

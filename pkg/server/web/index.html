@@ -18,6 +18,18 @@
         <span>Badge Studio</span>
       </a>
       <div class="navbar-item connection">
+        <div class="select is-small">
+          <select id="transport-select" aria-label="Transfer method">
+            <option value="ble">Bluetooth</option>
+            <option value="nfc">NFC reader (ACR1552)</option>
+          </select>
+        </div>
+        <div class="select is-small badge-type-select">
+          <select id="badge-type-select" aria-label="Badge type" disabled
+            title="Only one badge type is supported today.">
+            <option value="hybrid-397">3.97in 4-colour hybrid (460×768)</option>
+          </select>
+        </div>
         <span id="connection-dot" class="connection-dot" aria-hidden="true"></span>
         <span id="device-name">No badge connected</span>
         <button id="connect" class="button is-light is-outlined is-small" type="button">Choose badge</button>
@@ -191,9 +203,10 @@
               </div>
               <progress id="progress" class="progress is-primary" max="100" value="0">0%</progress>
               <button id="write-badge" class="button is-danger is-fullwidth" type="button" disabled>
-                Write confirmed image to badge
+                Write
               </button>
-              <p class="fine-print">Keep this tab visible and the badge nearby until the transfer completes.</p>
+              <p class="fine-print">Keep this tab visible until the transfer completes. NFC writes run on this
+                computer's reader, not in the browser.</p>
             </div>
           </aside>
         </div>
@@ -228,7 +241,7 @@
     </div>
   </dialog>
 
-  <script src="/app.js?v=14" type="module"></script>
+  <script src="/app.js?v=16" type="module"></script>
 </body>
 
 </html>

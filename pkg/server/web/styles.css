@@ -74,8 +74,10 @@ body {
 .connection {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   font-size: .88rem;
   gap: 10px;
+  justify-content: flex-end;
 }
 
 .connection-dot {
@@ -385,7 +387,8 @@ body {
     padding-inline: 14px;
   }
 
-  .connection #device-name {
+  .connection #device-name,
+  .connection .badge-type-select {
     display: none;
   }
 

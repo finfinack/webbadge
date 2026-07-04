@@ -1,7 +1,9 @@
 # webbadge
 
 Web Badge / Badge Studio is a standalone Go web application for preparing and
-transferring images to 460 × 768, four-color BOE e-ink badges.
+transferring images to 460 × 768, four-color BOE e-ink badges, either over
+Bluetooth Low Energy from the browser or over NFC through a local ACS
+ACR1552 PC/SC reader.
 
 <img width="600" alt="image" src="https://github.com/user-attachments/assets/b13720d1-c314-4fe2-b78e-a717ea502022" />
 
@@ -14,15 +16,19 @@ The Go server:
 - applies four-color Floyd–Steinberg dithering
 - returns an exact badge preview and the packed 88,320-byte image
 
-The browser performs the BLE transfer through Web Bluetooth. Images and badge
-data are not persisted by the server.
+The browser performs the BLE transfer through Web Bluetooth. Alternatively,
+the same confirmed image can be written over NFC: the Go process itself
+talks to a locally attached ACR1552 reader (PC/SC over cgo) and streams
+progress back to the browser, since PC/SC is not reachable from a web page.
+Images and badge data are not persisted by the server.
 
-Disclaimer: Almost all of this is AI generated. I would strongly advise against exposing this webserver anywhere else than localhost.
+Disclaimer: Almost all of this is AI generated. I would strongly advise against exposing this webserver anywhere else than localhost. This is doubly true for the NFC write path below, since any request that reaches this server can trigger a physical write on whatever badge is sitting on the reader.
 
 ## Requirements
 
 - Chrome or Edge on macOS, Windows, ChromeOS, or supported Android devices
-- a BLE badge exposing the Nordic-UART-style service described below
+- a BLE badge exposing the Nordic-UART-style service described below, and/or
+  an ACS ACR1552 PC/SC reader for the NFC transfer described below
 
 Web Bluetooth works from `http://localhost` during development.
 
@@ -123,9 +129,33 @@ level=ERROR msg="browser BLE" component=web_bluetooth event=ack.timeout stage="i
 
 No image content or packed badge data is logged.
 
+## NFC transfer (ACR1552)
+
+Instead of Bluetooth, the confirmed preview can be written over NFC using an
+ACS ACR1552 PC/SC reader and the badge's raw NFC-A FIFO protocol (recovered
+from the vendor Android app). Click "Write via NFC reader (ACR1552)" after
+confirming a preview; the Go process itself waits for a badge on the reader
+and writes the same image that Bluetooth would have sent, streaming progress
+back to the browser as it goes.
+
+Requirements:
+
+- macOS with cgo enabled (the default for `go run .` / `go build .` when
+  Xcode's command line tools are installed).
+- The ACS ACR1552 PC/SC driver installed, with the reader attached.
+- Reader firmware 1.05.00 or later, for raw ISO 14443-3 pass-through.
+
+On any other platform, or a build with `CGO_ENABLED=0` (including the
+Docker image below), the NFC endpoint reports a clear "PC/SC requires macOS
+with cgo enabled" error instead of failing to build; Bluetooth transfer is
+unaffected.
+
 ## Dependencies and licensing
 
-The Go application uses only the standard library.
+The Go application uses only the standard library. On macOS, the NFC
+transfer additionally links against the system PC/SC framework through cgo
+(no third-party Go module) — this is skipped entirely on other platforms or
+when `CGO_ENABLED=0`.
 
 The frontend vendors Bulma under its MIT license; the license text is stored in
 `pkg/server/web/BULMA-LICENSE`.
