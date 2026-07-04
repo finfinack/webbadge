@@ -21,7 +21,7 @@
         <div class="select is-small">
           <select id="transport-select" aria-label="Transfer method">
             <option value="ble">Bluetooth</option>
-            <option value="nfc">NFC reader (ACR1552)</option>
+            <option value="nfc" selected>NFC reader (ACR1552)</option>
           </select>
         </div>
         <div class="select is-small badge-type-select">
@@ -56,6 +56,11 @@
                 <li role="presentation">
                   <button id="upload-tab" type="button" role="tab" aria-selected="false" aria-controls="upload-panel">
                     Upload artwork
+                  </button>
+                </li>
+                <li role="presentation">
+                  <button id="tag-tab" type="button" role="tab" aria-selected="false" aria-controls="tag-panel">
+                    NFC tag tools
                   </button>
                 </li>
               </ul>
@@ -178,6 +183,48 @@
                 Prepare e-ink preview
               </button>
             </div>
+
+            <div id="tag-panel" class="tab-panel" role="tabpanel" aria-labelledby="tag-tab" hidden>
+              <div class="tag-info-panel">
+                <section class="tag-tool-section">
+                  <p class="tag-info-copy">
+                    Inspect low-level info from a regular NFC tag or the regular tag area some badges expose.
+                  </p>
+                  <button id="read-tag-info" class="button is-primary is-fullwidth" type="button">
+                    Inspect NFC tag
+                  </button>
+                  <p id="tag-read-status" class="help">
+                    Use the local NFC reader. Bluetooth does not expose tag reads.
+                  </p>
+                  <pre id="tag-info-output" class="tag-info-output">No tag info read yet.</pre>
+                </section>
+                <section class="tag-tool-section">
+                  <p class="tag-info-copy">
+                    Write a standard NDEF record only when the inspected tag confirms writable NDEF support.
+                  </p>
+                  <div class="field">
+                    <label class="label" for="tag-ndef-type">NDEF record type</label>
+                    <div class="control select is-fullwidth">
+                      <select id="tag-ndef-type">
+                        <option value="url">URL</option>
+                        <option value="email">Email</option>
+                        <option value="text">Text</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label class="label" for="tag-ndef-value">NDEF value</label>
+                    <div class="control">
+                      <input id="tag-ndef-value" class="input" type="text" maxlength="512"
+                        placeholder="https://example.com" autocomplete="off">
+                    </div>
+                  </div>
+                  <button id="write-tag-ndef" class="button is-warning is-fullwidth" type="button" disabled>
+                    Write NDEF record
+                  </button>
+                </section>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -241,7 +288,7 @@
     </div>
   </dialog>
 
-  <script src="/app.js?v=17" type="module"></script>
+  <script src="/app.js?v=20" type="module"></script>
 </body>
 
 </html>

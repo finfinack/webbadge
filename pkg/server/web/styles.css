@@ -216,6 +216,39 @@ body {
   font-size: .86rem;
 }
 
+.tag-info-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.tag-tool-section {
+  display: grid;
+  gap: .9rem;
+}
+
+.tag-tool-section + .tag-tool-section {
+  border-top: 1px solid var(--app-border);
+  padding-top: 1rem;
+}
+
+.tag-info-copy {
+  color: var(--app-muted);
+  margin: 0;
+}
+
+.tag-info-output {
+  background: #111319;
+  border: 1px solid var(--app-border);
+  border-radius: var(--bulma-radius-large);
+  color: var(--bulma-text-strong);
+  margin: 0;
+  min-height: 11rem;
+  overflow-x: auto;
+  padding: 1rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .drop-icon {
   color: var(--accent);
   font-size: 1.8rem;

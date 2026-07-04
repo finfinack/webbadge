@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -57,6 +58,43 @@ func newNFCStatusTestHandler(probe nfcReaderProbe) http.Handler {
 	service := &api{nfcProbe: probe}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/nfc/status", service.nfcStatus)
+	return securityHeaders(mux)
+}
+
+type fakeNFCTagInfoReader struct {
+	info nfcTagInfo
+	err  error
+}
+
+func (fake *fakeNFCTagInfoReader) ReadInfo(context.Context) (nfcTagInfo, error) {
+	return fake.info, fake.err
+}
+
+func (fake *fakeNFCTagInfoReader) WriteNDEF(_ context.Context, recordType, value string) error {
+	if fake.err != nil {
+		return fake.err
+	}
+	fake.info.Content = recordType + ":" + value
+	return nil
+}
+
+func newNFCTagInfoTestHandler(reader nfcTagInfoReader) http.Handler {
+	service := &api{
+		nfcSlots:   make(chan struct{}, 1),
+		nfcTagInfo: reader,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/nfc/tag-info", service.readNFCTagInfo)
+	return securityHeaders(mux)
+}
+
+func newNFCTagNDEFWriteTestHandler(writer nfcTagNDEFWriter) http.Handler {
+	service := &api{
+		nfcSlots:    make(chan struct{}, 1),
+		nfcTagWrite: writer,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/nfc/tag-ndef", service.writeNFCTagNDEF)
 	return securityHeaders(mux)
 }
 
@@ -351,6 +389,160 @@ func TestWriteNFCEndpointDispatchesSelectedProfile(t *testing.T) {
 	}
 	if fake.profile != badgeimage.NfcInk240x416 {
 		t.Fatalf("profile = %v, want %v", fake.profile, badgeimage.NfcInk240x416)
+	}
+}
+
+func TestReadNFCTagInfoEndpoint(t *testing.T) {
+	reader := &fakeNFCTagInfoReader{info: nfcTagInfo{
+		Reader:        "ACR1552 PICC",
+		ATR:           "3B8F8001804F0CA000000306030001000000006A",
+		UID:           "04A1B2C3D4E5",
+		ATS:           "067577810280",
+		NDEFSupported: true,
+		NDEFWritable:  true,
+		NDEFCapacity:  500,
+		Content:       "Text: hello",
+		ContentHex:    "D101085402656E68656C6C6F",
+		ContentLines:  []string{"Text: hello"},
+		ProbeLines: []string{
+			"Type 4 NDEF application select: status 6A81",
+			"Storage-card read block/page 0: ok data=04010203",
+		},
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-info", nil)
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTagInfoTestHandler(reader).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+	var payload nfcTagInfo
+	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Reader != reader.info.Reader || payload.UID != reader.info.UID || payload.ATS != reader.info.ATS {
+		t.Fatalf("payload = %+v, want %+v", payload, reader.info)
+	}
+	if payload.Content != reader.info.Content || payload.ContentHex != reader.info.ContentHex {
+		t.Fatalf("payload content = %+v, want %+v", payload, reader.info)
+	}
+	if !payload.NDEFSupported || !payload.NDEFWritable || payload.NDEFCapacity != 500 {
+		t.Fatalf("payload ndef = %+v, want supported+writable capacity 500", payload)
+	}
+	if len(payload.ProbeLines) != len(reader.info.ProbeLines) {
+		t.Fatalf("probe lines = %#v, want %#v", payload.ProbeLines, reader.info.ProbeLines)
+	}
+}
+
+func TestReadNFCTagInfoEndpointRejectsMissingHeader(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-info", nil)
+	response := httptest.NewRecorder()
+
+	newNFCTagInfoTestHandler(&fakeNFCTagInfoReader{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestReadNFCTagInfoEndpointSurfacesReaderError(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-info", nil)
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTagInfoTestHandler(&fakeNFCTagInfoReader{err: errTestWrite}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), errTestWrite.Error()) {
+		t.Fatalf("response body %q does not contain %q", response.Body.String(), errTestWrite.Error())
+	}
+}
+
+func TestWriteNFCTagNDEFEndpoint(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-ndef", strings.NewReader(`{"type":"url","value":"https://example.com"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTagNDEFWriteTestHandler(&fakeNFCTagInfoReader{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+}
+
+func TestWriteNFCTagNDEFEndpointRejectsMissingHeader(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-ndef", strings.NewReader(`{"type":"text","value":"hi"}`))
+	response := httptest.NewRecorder()
+
+	newNFCTagNDEFWriteTestHandler(&fakeNFCTagInfoReader{}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+	}
+}
+
+func TestWriteNFCTagNDEFEndpointSurfacesWriterError(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/nfc/tag-ndef", strings.NewReader(`{"type":"text","value":"hi"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-WebBadge-Request", "1")
+	response := httptest.NewRecorder()
+
+	newNFCTagNDEFWriteTestHandler(&fakeNFCTagInfoReader{err: errTestWrite}).ServeHTTP(response, request)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+}
+
+func TestParseCapabilityContainer(t *testing.T) {
+	data := []byte{
+		0x00, 0x0F,
+		0x20,
+		0x00, 0x3B,
+		0x00, 0x34,
+		0x04, 0x06,
+		0xE1, 0x04,
+		0x01, 0xF4,
+		0x00, 0xFF,
+	}
+	capability, err := parseCapabilityContainer(data)
+	if err != nil {
+		t.Fatalf("parseCapabilityContainer() error = %v", err)
+	}
+	if got := fmt.Sprintf("%X", capability.FileID); got != "E104" {
+		t.Fatalf("fileID = %s, want E104", got)
+	}
+	if capability.MaxSize != 500 {
+		t.Fatalf("maxSize = %d, want 500", capability.MaxSize)
+	}
+	if capability.Writable {
+		t.Fatal("Writable = true, want false for write access FF")
+	}
+}
+
+func TestSummarizeNDEFTextRecord(t *testing.T) {
+	data := []byte{0xD1, 0x01, 0x08, 0x54, 0x02, 0x65, 0x6E, 'h', 'e', 'l', 'l', 'o'}
+	summary, lines := summarizeNDEF(data)
+	if summary != "Text: hello" {
+		t.Fatalf("summary = %q, want %q", summary, "Text: hello")
+	}
+	if len(lines) != 1 || lines[0] != "Text: hello" {
+		t.Fatalf("lines = %#v, want [\"Text: hello\"]", lines)
+	}
+}
+
+func TestEncodeNDEFMessage(t *testing.T) {
+	message, err := encodeNDEFMessage("email", "person@example.com")
+	if err != nil {
+		t.Fatalf("encodeNDEFMessage() error = %v", err)
+	}
+	if got := fmt.Sprintf("%X", message); !strings.Contains(got, "55") {
+		t.Fatalf("message = %s, want URI record", got)
 	}
 }
 

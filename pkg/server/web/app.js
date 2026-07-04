@@ -64,8 +64,10 @@ function bytesToHex(value) {
 const elements = {
   uploadTab: document.querySelector("#upload-tab"),
   designTab: document.querySelector("#design-tab"),
+  tagTab: document.querySelector("#tag-tab"),
   uploadPanel: document.querySelector("#upload-panel"),
   designPanel: document.querySelector("#design-panel"),
+  tagPanel: document.querySelector("#tag-panel"),
   artwork: document.querySelector("#artwork"),
   artworkFit: document.querySelector("#artwork-fit"),
   dropZone: document.querySelector("#drop-zone"),
@@ -104,6 +106,12 @@ const elements = {
   transportSelect: document.querySelector("#transport-select"),
   badgeTypeSelect: document.querySelector("#badge-type-select"),
   writeBadge: document.querySelector("#write-badge"),
+  readTagInfo: document.querySelector("#read-tag-info"),
+  writeTagNdef: document.querySelector("#write-tag-ndef"),
+  tagNdefType: document.querySelector("#tag-ndef-type"),
+  tagNdefValue: document.querySelector("#tag-ndef-value"),
+  tagReadStatus: document.querySelector("#tag-read-status"),
+  tagInfoOutput: document.querySelector("#tag-info-output"),
   status: document.querySelector("#status"),
   progress: document.querySelector("#progress"),
   progressLabel: document.querySelector("#progress-label"),
@@ -128,12 +136,17 @@ let webcamStream = null;
 let webcamCrop = null;
 let webcamDrag = null;
 let webcamRequest = 0;
-let transportMode = "ble";
+let transportMode = "nfc";
 let badgeProfile = "hybrid-397";
 let nfcStatusChecking = false;
 let nfcReaderAvailable = false;
 let nfcReaderName = "";
 let nfcBadgePresent = false;
+let lastTagInfo = null;
+
+function isTagTabActive() {
+  return activeTab === "tag";
+}
 
 class AckQueue {
   constructor() {
@@ -193,16 +206,21 @@ const acknowledgements = new AckQueue();
 function setTab(name) {
   activeTab = name;
   const upload = name === "upload";
+  const design = name === "design";
+  const tag = name === "tag";
   elements.uploadTab.parentElement.classList.toggle("is-active", upload);
-  elements.designTab.parentElement.classList.toggle("is-active", !upload);
+  elements.designTab.parentElement.classList.toggle("is-active", design);
+  elements.tagTab.parentElement.classList.toggle("is-active", tag);
   elements.uploadTab.setAttribute("aria-selected", String(upload));
-  elements.designTab.setAttribute("aria-selected", String(!upload));
+  elements.designTab.setAttribute("aria-selected", String(design));
+  elements.tagTab.setAttribute("aria-selected", String(tag));
   elements.uploadPanel.hidden = !upload;
-  elements.designPanel.hidden = upload;
+  elements.designPanel.hidden = !design;
+  elements.tagPanel.hidden = !tag;
   invalidatePrepared();
   if (upload && elements.uploadImage.complete && elements.uploadImage.src) {
     drawImageFit(elements.uploadImage, elements.artworkFit.value);
-  } else if (!upload) {
+  } else if (design) {
     drawDesign();
   }
 }
@@ -214,6 +232,13 @@ function setProgress(value, message) {
 }
 
 function updateActions() {
+  elements.readTagInfo.disabled = transportMode !== "nfc" || transferring || nfcStatusChecking;
+  elements.writeTagNdef.disabled =
+    transportMode !== "nfc" ||
+    transferring ||
+    !lastTagInfo?.ndefSupported ||
+    !lastTagInfo?.ndefWritable ||
+    !elements.tagNdefValue.value.trim();
   if (transportMode === "ble") {
     const connected = Boolean(bluetoothDevice?.gatt?.connected);
     elements.connectionDot.classList.toggle("connected", connected);
@@ -222,7 +247,7 @@ function updateActions() {
       : "No badge connected";
     elements.connect.textContent = bluetoothDevice ? "Change badge" : "Choose badge";
     elements.connect.disabled = transferring;
-    elements.writeBadge.disabled = !packedImage || !bluetoothDevice || transferring;
+    elements.writeBadge.disabled = isTagTabActive() || !packedImage || !bluetoothDevice || transferring;
   } else {
     elements.connectionDot.classList.toggle("connected", nfcReaderAvailable);
     if (nfcStatusChecking) {
@@ -236,7 +261,7 @@ function updateActions() {
     }
     elements.connect.textContent = "Check for reader";
     elements.connect.disabled = transferring || nfcStatusChecking;
-    elements.writeBadge.disabled = !previewPngBytes || !nfcReaderAvailable || transferring;
+    elements.writeBadge.disabled = isTagTabActive() || !previewPngBytes || !nfcReaderAvailable || transferring;
   }
 }
 
@@ -272,15 +297,65 @@ async function checkNFCReader() {
 function invalidatePrepared() {
   packedImage = null;
   previewPngBytes = null;
+  if (!isTagTabActive()) {
+    lastTagInfo = null;
+  }
   if (previewURL) URL.revokeObjectURL(previewURL);
   previewURL = "";
   elements.finalPreview.hidden = true;
   elements.canvas.hidden = false;
-  elements.previewTitle.textContent = activeTab === "design" ? "Layout preview" : "Artwork preview";
+  elements.previewTitle.textContent = activeTab === "design"
+    ? "Layout preview"
+    : (activeTab === "upload" ? "Artwork preview" : "Tag info");
   elements.previewState.textContent = "Draft";
   elements.previewState.className = "tag is-dark";
-  setProgress(0, "Prepare an image to continue.");
+  setProgress(0, isTagTabActive() ? "Read an NFC tag to inspect it." : "Prepare an image to continue.");
   updateActions();
+}
+
+function formatTagInfo(info) {
+  const lines = [
+    `Reader: ${info.reader || "Unknown reader"}`,
+    `UID: ${info.uid || "Unavailable"}`,
+    `ATR: ${info.atr || "Unavailable"}`,
+  ];
+  if (info.ats) {
+    lines.push(`ATS: ${info.ats}`);
+  }
+  if (info.contentLines?.length) {
+    lines.push("");
+    lines.push("Content:");
+    for (const line of info.contentLines) {
+      lines.push(line);
+    }
+  } else if (info.content) {
+    lines.push("");
+    lines.push("Content:");
+    lines.push(info.content);
+  }
+  if (info.contentHex) {
+    lines.push("");
+    lines.push(`NDEF hex: ${info.contentHex}`);
+  }
+  if (info.ndefSupported) {
+    lines.push("");
+    lines.push(`NDEF support: yes${info.ndefWritable ? " (writable)" : " (read-only)"}`);
+    if (info.ndefCapacity) {
+      lines.push(`NDEF capacity: ${info.ndefCapacity} bytes`);
+    }
+  }
+  if (info.contentError) {
+    lines.push("");
+    lines.push(`Content read: ${info.contentError}`);
+  }
+  if (info.probeLines?.length) {
+    lines.push("");
+    lines.push("Probe results:");
+    for (const line of info.probeLines) {
+      lines.push(line);
+    }
+  }
+  return lines.join("\n");
 }
 
 function loadImage(file) {
@@ -921,6 +996,71 @@ async function writeBadgeOverNFC() {
   }
 }
 
+async function readNFCTagInfo() {
+  if (transportMode !== "nfc" || transferring) return;
+  transferring = true;
+  lastTagInfo = null;
+  updateActions();
+  elements.tagReadStatus.textContent = "Waiting for a regular NFC tag on the local reader…";
+  clientLog("info", "nfc.tag_info.started");
+  try {
+    const response = await fetch("/api/nfc/tag-info", {
+      method: "POST",
+      headers: {"X-WebBadge-Request": "1"},
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "NFC tag read failed.");
+    }
+    lastTagInfo = payload;
+    elements.tagInfoOutput.textContent = formatTagInfo(payload);
+    elements.tagReadStatus.textContent = "Tag info read successfully.";
+    clientLog("info", "nfc.tag_info.completed", {detail: `uid=${payload.uid || ""}`});
+  } catch (error) {
+    elements.tagReadStatus.textContent = error.message;
+    clientLog("error", "nfc.tag_info.failed", {
+      detail: `${error.name || "Error"}: ${error.message || String(error)}`,
+    });
+  } finally {
+    transferring = false;
+    updateActions();
+  }
+}
+
+async function writeNFCTagNDEF() {
+  if (transportMode !== "nfc" || transferring) return;
+  transferring = true;
+  updateActions();
+  elements.tagReadStatus.textContent = "Waiting for the same NDEF tag to write…";
+  try {
+    const response = await fetch("/api/nfc/tag-ndef", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-WebBadge-Request": "1",
+      },
+      body: JSON.stringify({
+        type: elements.tagNdefType.value,
+        value: elements.tagNdefValue.value.trim(),
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || "NDEF write failed.");
+    }
+    elements.tagReadStatus.textContent = "NDEF write completed. Read the tag again to verify.";
+    clientLog("info", "nfc.tag_ndef.completed", {detail: `type=${elements.tagNdefType.value}`});
+  } catch (error) {
+    elements.tagReadStatus.textContent = error.message;
+    clientLog("error", "nfc.tag_ndef.failed", {
+      detail: `${error.name || "Error"}: ${error.message || String(error)}`,
+    });
+  } finally {
+    transferring = false;
+    updateActions();
+  }
+}
+
 async function selectOptionalImage(input, setter) {
   const file = input.files[0];
   if (!file) {
@@ -1168,6 +1308,7 @@ function clearWebcamCapture() {
 
 elements.uploadTab.addEventListener("click", () => setTab("upload"));
 elements.designTab.addEventListener("click", () => setTab("design"));
+elements.tagTab.addEventListener("click", () => setTab("tag"));
 elements.artwork.addEventListener("change", () => selectArtwork(elements.artwork.files[0]));
 elements.artworkFit.addEventListener("change", () => {
   if (elements.uploadImage.complete && elements.uploadImage.src) {
@@ -1258,6 +1399,9 @@ elements.badgeTypeSelect.addEventListener("change", () => {
   if (transportMode === "nfc" && !nfcStatusChecking) checkNFCReader();
 });
 elements.writeBadge.addEventListener("click", writeBadge);
+elements.readTagInfo.addEventListener("click", readNFCTagInfo);
+elements.writeTagNdef.addEventListener("click", writeNFCTagNDEF);
+elements.tagNdefValue.addEventListener("input", updateActions);
 window.addEventListener("pagehide", clearWebcamCapture);
 
 drawDesign();

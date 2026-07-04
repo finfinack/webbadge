@@ -34,6 +34,8 @@ type api struct {
 	nfcSlots    chan struct{}
 	nfcWriter   nfcBadgeWriter
 	nfcProbe    nfcReaderProbe
+	nfcTagInfo  nfcTagInfoReader
+	nfcTagWrite nfcTagNDEFWriter
 }
 
 type prepareResponse struct {
@@ -71,12 +73,16 @@ func New() (http.Handler, error) {
 		nfcSlots:    make(chan struct{}, 1),
 		nfcWriter:   pcscNFCWriter{},
 		nfcProbe:    pcscReaderProbe{},
+		nfcTagInfo:  pcscNFCTagInfoReader{},
+		nfcTagWrite: pcscNFCTagInfoReader{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/prepare", service.prepare)
 	mux.HandleFunc("POST /api/log", service.browserLog)
 	mux.HandleFunc("POST /api/nfc/write", service.writeNFC)
 	mux.HandleFunc("GET /api/nfc/status", service.nfcStatus)
+	mux.HandleFunc("POST /api/nfc/tag-info", service.readNFCTagInfo)
+	mux.HandleFunc("POST /api/nfc/tag-ndef", service.writeNFCTagNDEF)
 	mux.Handle("GET /", http.FileServer(http.FS(staticFiles)))
 	return securityHeaders(mux), nil
 }
